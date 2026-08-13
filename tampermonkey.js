@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      6.9
+// @version      7.2
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -1227,13 +1227,30 @@
     });
     return hit;
   }
+  // A migration is recorded as done ONLY once its keys are verifiably in the
+  // stored list. lsSet swallows write failures — a full quota is entirely
+  // possible here, since the capture store is allowed to reach MAX_BYTES — and
+  // the previous version marked the release done regardless. That turned one
+  // failed write into a permanent state: the ticks never applied, the version
+  // was recorded, and it was never retried. The symptom was a vendor row
+  // printing a single parameter out of thirty with no indication why.
   function runMigrations() {
     try {
       var done = ls(MIGRATED_KEY, []);
       var changed = false;
       MIGRATIONS.forEach(function (m) {
         if (done.indexOf(m.v) >= 0) return;
-        m.keys.forEach(function (k) { setEnabled(k, true); });
+        setEnabledMany(m.keys, true);
+        var now = {};
+        (ls(FIELDS_KEY, []) || []).forEach(function (k) { now[k] = true; });
+        var stuck = m.keys.every(function (k) { return now[k]; });
+        if (!stuck) {
+          console.log('%c[CAP] could not save field defaults for ' + m.v +
+            '%c  storage may be full — run __capClear() then reload',
+            'background:#e53935;color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold',
+            'color:#999');
+          return;                       // not done: retried on the next load
+        }
         done.push(m.v);
         changed = true;
       });
@@ -1264,12 +1281,21 @@
     };
   }
   function enabledMatcher() { return makeMatcher(Object.keys(enabledSet())); }
-  function setEnabled(k, on) {
+  function setEnabled(k, on) { setEnabledMany([k], on); }
+  // One read and one write for the whole list. Doing it per key meant a
+  // migration ticking 229 keys performed 229 parse/stringify/write cycles
+  // against localStorage — slow, and 229 separate chances to hit the quota.
+  function setEnabledMany(keys, on) {
     var arr = ls(FIELDS_KEY, DEFAULT_ON.slice());
-    var i = arr.indexOf(k);
-    if (on && i < 0) arr.push(k);
-    if (!on && i >= 0) arr.splice(i, 1);
+    var idx = {};
+    arr.forEach(function (k) { idx[k] = true; });
+    keys.forEach(function (k) {
+      if (on && !idx[k]) { arr.push(k); idx[k] = true; }
+      else if (!on && idx[k]) { delete idx[k]; }
+    });
+    if (!on) arr = arr.filter(function (k) { return idx[k]; });
     lsSet(FIELDS_KEY, arr);
+    return arr;
   }
   // ───────────────────────────────────────────────────────────────────────────
   // DOM watch — remembers the element that was engaged with and the
@@ -1573,8 +1599,8 @@
         nline('fired by', nn.fired_by +
           (nn.fired_by_how === 'tealium:via' || nn.fired_by_how === 'gtm:via'
             ? '  ·  via ' + nn.fired_by_script : '') +
-          (nn.fired_by_confirmed ? '  ·  stack and payload agree' : '') +
-          (nn.fired_by_conflict ? '  ·  ⚠ ' + nn.fired_by_conflict : ''));
+          (nn.fired_by_conflict ? '  ·  ⚠ ' + nn.fired_by_conflict
+                                : nn.fired_by_basis ? '  ·  ' + nn.fired_by_basis : ''));
       }
       nline('transport', nn.transport +
         (nn.duration_ms != null ? '  · ' + nn.duration_ms + 'ms' : '') +
@@ -1696,6 +1722,18 @@
     if (row._afterClick) {
       console.log('%c· ' + row._afterClick, 'color:#9e9e9e;font-style:italic');
     }
+    // Captured, catalogued, but not ticked — the one state that used to be
+    // invisible. Uncatalogued values announce themselves in the block below;
+    // unticked ones simply vanished, so a row could print one parameter out of
+    // thirty and still look complete. If the row is holding data back, it says so.
+    (function () {
+      var held = Object.keys(row.data).filter(function (k) { return !isOn(k); });
+      if (!held.length) return;
+      console.log('%c' + held.length + ' more captured, not ticked%c\n  ' +
+        held.slice(0, 14).join(', ') + (held.length > 14 ? ', …' : '') +
+        '\n  Tick them in Fields, or run __capResetFields() for the defaults.',
+        'color:#8d6e63;font-weight:bold', 'color:#777;font-family:monospace');
+    })();
     if (row._extra) {
       var isRaw = !Array.isArray(row._extra);
       console.log(
@@ -1954,8 +1992,17 @@
     };
     if (id && declared && att.container && declared !== att.container) {
       out.conflict = 'stack says ' + att.container + ', payload says ' + declared;
-    } else if (declared && att.container === declared) {
+      out.basis = 'stack and payload DISAGREE';
+    } else if (declared && att.container && att.container === declared) {
       out.confirmed = true;
+      out.basis = 'stack and payload agree';
+    } else if (att.container) {
+      out.basis = 'from the call stack';
+    } else if (declared) {
+      // No usable stack — every PerformanceObserver replay, and any request the
+      // wrappers saw without frames. The vendor naming its own source is still
+      // good evidence, but it is weaker, and the row should not imply otherwise.
+      out.basis = 'named in the payload';
     }
     return out;
   }
@@ -2386,6 +2433,7 @@
     if (fb.script) row._net.fired_by_script = fb.script;
     if (fb.how) row._net.fired_by_how = fb.how;
     if (fb.confirmed) row._net.fired_by_confirmed = true;
+    if (fb.basis) row._net.fired_by_basis = fb.basis;
     if (fb.conflict) row._net.fired_by_conflict = fb.conflict;
     if (info.batch) row._net.batch = info.batch;
     if (info.wire_params && info.wire_params !== row._fields) row._net.wire_params = info.wire_params;
