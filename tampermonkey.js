@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      7.2
+// @version      7.3
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -1444,11 +1444,15 @@
   function splitPayload(row, d, rawMax, clip) {
     var isKnown   = makeMatcher(allKeysFor(row));
     var isBlocked = makeMatcher(BLOCKLIST);
-    var extra = {}, n = 0;
+    var extra = {}, n = 0, empty = [];
     Object.keys(d).forEach(function (k) {
       if (isBlocked(k)) return;
       var v = d[k];
-      if (v === undefined || v === null || v === '') return;
+      // A parameter sent with no value still went over the wire and still counts
+      // towards the total, so it cannot simply vanish — that is what made a row
+      // read "30 parameters" while showing 17. It carries nothing worth a line of
+      // its own, so the NAMES are kept and reported together.
+      if (v === undefined || v === null || v === '') { empty.push(k); return; }
       if (clip) v = clipValue(v, clip);
       if (isKnown(k)) { row.data[k] = v; }
       else { extra[k] = v; n++; }
@@ -1458,6 +1462,10 @@
       row._extra = (Object.keys(d).length <= rawMax)
         ? extra
         : Object.keys(extra).slice(0, 60);
+    }
+    if (empty.length) {
+      row._empty_n = empty.length;
+      row._empty = empty.slice(0, 40);
     }
   }
   function clipValue(v, max) {
@@ -1726,14 +1734,21 @@
     // invisible. Uncatalogued values announce themselves in the block below;
     // unticked ones simply vanished, so a row could print one parameter out of
     // thirty and still look complete. If the row is holding data back, it says so.
+    var heldN = 0;
     (function () {
       var held = Object.keys(row.data).filter(function (k) { return !isOn(k); });
+      heldN = held.length;
       if (!held.length) return;
       console.log('%c' + held.length + ' more captured, not ticked%c\n  ' +
         held.slice(0, 14).join(', ') + (held.length > 14 ? ', …' : '') +
         '\n  Tick them in Fields, or run __capResetFields() for the defaults.',
         'color:#8d6e63;font-weight:bold', 'color:#777;font-family:monospace');
     })();
+    if (row._empty_n) {
+      console.log('%c' + row._empty_n + ' sent empty%c\n  ' + row._empty.join(', ') +
+        (row._empty_n > row._empty.length ? ', …' : ''),
+        'color:#616161;font-weight:bold', 'color:#666;font-family:monospace');
+    }
     if (row._extra) {
       var isRaw = !Array.isArray(row._extra);
       console.log(
@@ -1750,9 +1765,22 @@
         'color:inherit;font-family:monospace'
       );
     }
+    // The footer reconciles the row: total, then where each parameter went.
+    // Without the breakdown a reader has to assume the difference between the
+    // total and the visible lines is a bug — which is exactly how the empty ones
+    // were found. "on the wire" is dropped when an envelope was unwrapped, since
+    // the expanded count is by definition not what travelled.
+    var shownN = Object.keys(shown).length;
+    var parts = [shownN + ' shown'];
+    if (row._empty_n) parts.push(row._empty_n + ' empty');
+    if (heldN) parts.push(heldN + ' not ticked');
+    if (row._uncat) parts.push(row._uncat + ' uncatalogued');
     console.log(
       '%c' + row._time + '  ·  via ' + row._via + '  ·  ' + row._fields +
-      (row._kind === 'net' ? ' parameters on the wire' : ' fields in payload'),
+      (row._kind === 'net'
+        ? (row._net && row._net.wire_params ? ' parameters' : ' parameters on the wire')
+        : ' fields in payload') +
+      '  ·  ' + parts.join('  ·  '),
       'color:#999;font-style:italic'
     );
     console.groupEnd();
@@ -2661,6 +2689,7 @@
       var o = { _time: r._time, _kind: kindOf(r), _type: r._type, _via: r._via,
                 _host: r._host, _path: r._path, _fields: r._fields, data: {} };
       if (r._extra) { o._uncat = r._uncat; o._extra = r._extra; }
+      if (r._empty_n) { o._empty_n = r._empty_n; o._empty = r._empty; }
       if (r._net) { o._net = r._net; }
       if (r._dom) { o._dom = r._dom; }
       if (r._afterClick) { o._afterClick = r._afterClick; }
