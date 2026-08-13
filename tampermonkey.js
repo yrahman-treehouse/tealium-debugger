@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      5.6
-// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit), with an on-screen field picker and JSON/CSV export. Persists across page loads and tabs.
+// @version      5.9
+// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
 // @match        *://*.huurwoningen.com/*
@@ -88,7 +88,7 @@
       'cp._rdt_em':   'Reddit hashed email cookie'
     }},
     { name: 'Consent', keys: [
-      'consent_decision', 'tci.consent_type',
+      'consent_decision', 'tci.consent_type', 'tci.event_id',
       'tci.purposes_with_consent_all', 'tci.purposes_with_consent_processed',
       'tci.purposes_with_consent_unprocessed',
       'google_ad_storage_consent', 'google_ad_user_data_consent',
@@ -113,6 +113,7 @@
       'google_url_passthrough':               'Consent Mode · pass gclid in the URL when denied',
       'microsoft_ad_storage_consent':         'Microsoft UET · ad_storage',
       'tci.consent_type':                     'Tealium consent integration · decision type',
+      'tci.event_id':                         'Tealium consent integration · id for this consent event',
       'tci.purposes_with_consent_all':        'Purposes consented · all',
       'tci.purposes_with_consent_processed':  'Purposes consented · processed',
       'tci.purposes_with_consent_unprocessed':'Purposes consented · unprocessed',
@@ -257,7 +258,9 @@
         'event', 'id', 'uuid', 'click_id', 'em', 'external_id',
         'm.conversionId', 'm.*',
         'integration', 'partner', 'opt_out', 'esurl',
-        'ts', 'v', 'sh', 'sw', 'db'
+        'ts', 'v', 'sh', 'sw', 'db',
+        // Sent alongside m.* on live conversion hits.
+        'category', 'name'
       ], labels: {
         'event':          'Reddit event name',
         'id':             'Reddit advertiser / pixel id',
@@ -275,7 +278,9 @@
         'v':              'Reddit pixel version',
         'sh':             'Screen height reported to Reddit',
         'sw':             'Screen width reported to Reddit',
-        'db':             'Reddit pixel diagnostics flags'
+        'db':             'Reddit pixel diagnostics flags',
+        'category':       'Product category sent to Reddit',
+        'name':           'Product name sent to Reddit'
       }},
     // ─────────────────────────────────────────────────────────────────────────
     // The remaining scoped groups follow the same rule as Reddit's: these are
@@ -291,7 +296,19 @@
     { name: 'Meta pixel (on the wire)', id: 'fb_wire', scope: { endpoint: ['fb/tr'] },
       keys: [
         'id', 'ev', 'eid', 'dl', 'rl', 'if', 'ts', 'sw', 'sh', 'v', 'r', 'ec',
-        'fbp', 'fbc', 'it', 'coo', 'rqm', 'cd[*', 'ud[*'
+        'fbp', 'fbc', 'it', 'coo', 'rqm', 'cd[*', 'ud[*',
+        // Seen on live hits. 'a' is the one worth reading of these: it names
+        // Tealium as the thing that fired the pixel, which is how you tell a
+        // Tealium-fired Meta hit from one hardcoded in the page.
+        'a', 'cdl', 'ler', 'plt', 'tz',
+        // Catalogued so they are named in the picker, but left without a label:
+        // I have no source for these I would trust, and a wrong label is worse
+        // than none.
+        'aems', 'iw', 'o', 'tm',
+        // 38 parameters on a single hit, each a short feature-flag code, so they
+        // get one wildcard rather than 38 checkboxes. Off by default — see the
+        // note above DEFAULT_ON.
+        'expv2[*'
       ], labels: {
         'id':   'Meta pixel id',
         'ev':   'Meta event name (PageView, Purchase, …)',
@@ -311,7 +328,13 @@
         'coo':  'First-party cookie use enabled',
         'rqm':  'Transport the pixel chose (GET / POST)',
         'cd[*': 'Custom data — value, currency, content_ids, content_type …',
-        'ud[*': 'Advanced matching user data — hashed em, ph, fn, external_id …'
+        'ud[*': 'Advanced matching user data — hashed em, ph, fn, external_id …',
+        'a':    'Integration agent — what fired the pixel (tmtealium = a Tealium tag)',
+        'cdl':  'Privacy Sandbox cookie-deprecation label (API_unavailable = not in a test group)',
+        'ler':  'Last external referrer',
+        'plt':  'Page load time (ms)',
+        'tz':   'Timezone offset from UTC (minutes)',
+        'expv2[*': 'Meta feature-flag vector — one short code per flag, ~38 per hit'
       }},
     { name: 'Awin conversion (on the wire)', id: 'awin_wire', scope: { endpoint: ['awin'] },
       keys: [
@@ -335,7 +358,12 @@
       keys: [
         'ti', 'evt', 'ea', 'ec', 'el', 'ev', 'gv', 'gc', 'Ver', 'mid', 'sid',
         'vid', 'p', 'r', 'tl', 'lt', 'sw', 'sh', 'msclkid', 'prodid',
-        'pagetype', 'asc', 'uach'
+        'pagetype', 'asc', 'uach',
+        // From live hits. 'tcf' is the useful one — it spells out the consent
+        // state UET actually acted on, which 'asc' only summarises.
+        'tcf', 'lg', 'rn',
+        // Named but unlabelled — see the note in the Meta group.
+        'bo', 'tm', 'cdb', 'src', 'vids', 'pi', 'sc', 'sv'
       ], labels: {
         'ti':      'UET tag id',
         'evt':     'Hit type — pageLoad, custom, …',
@@ -359,7 +387,10 @@
         'prodid':  'Product id — remarketing (ecomm_prodid)',
         'pagetype':'Page type — remarketing (ecomm_pagetype)',
         'asc':     'Consent Mode · ad_storage (G = granted, D = denied)',
-        'uach':    'User-agent client hints'
+        'uach':    'User-agent client hints',
+        'tcf':     'Consent detail UET acted on — gdpr=Y/N, as=ad storage, ms=measurement (G/D)',
+        'lg':      'Browser language',
+        'rn':      'Cache buster'
       }},
     // Clarity uploads a JSON body whose envelope is a POSITIONAL ARRAY, not an
     // object: 'e' is [version, sequence, start, duration, projectId, userId,
@@ -379,7 +410,17 @@
         'label', 'value', 'currency_code', 'oid', 'data', 'gtm', 'gcs', 'gcd',
         'dma', 'dma_cps', 'npa', 'auid', 'gclaw', 'gad_source',
         'ct_cookie_present', 'random', 'cv', 'fst', 'url', 'ref', 'tiba',
-        'u_h', 'u_w', 'u_tz', 'frm'
+        'u_h', 'u_w', 'u_tz', 'frm',
+        // From live hits.
+        'en', 'is_vtc', 'pscdl', 'tag_exp', 'hn', 'bg',
+        // Named but unlabelled — see the note in the Meta group.
+        'cid', 'ipr', 'rmt_tld', 'guid', 'async', 'fmt', 'rfmt', 'ept', 'rcb',
+        '_tu', 'tcfd',
+        // User-Agent Client Hints: the browser fingerprint Google now collects in
+        // place of the UA string. Seven parameters on every hit, identical across
+        // Google Ads and GA4, and never the answer to a tagging question — so
+        // catalogued and named, but off by default.
+        'uaa', 'uab', 'uafvl', 'uamb', 'uap', 'uapv', 'uaw'
       ], labels: {
         'label':             'Conversion label — the AW-xxxxx/label pair',
         'value':             'Conversion value',
@@ -405,14 +446,34 @@
         'u_h':               'Screen height reported to Google',
         'u_w':               'Screen width reported to Google',
         'u_tz':              'Timezone offset (minutes)',
-        'frm':               'Fired inside a frame'
+        'frm':               'Fired inside a frame',
+        'en':                'gtag event name — gtag.config on a page load, conversion on a conversion',
+        'is_vtc':            'View-through conversion (1 = yes, no click involved)',
+        'pscdl':             'Privacy Sandbox cookie-deprecation label',
+        'tag_exp':           'Google tag experiment ids active for this hit',
+        'hn':                'Host that served the conversion tag',
+        'bg':                'Background colour of the legacy conversion iframe',
+        'uaa':               'Client hint · CPU architecture',
+        'uab':               'Client hint · CPU bitness',
+        'uafvl':             'Client hint · browser brand and full version list',
+        'uamb':              'Client hint · mobile (1 = yes)',
+        'uap':               'Client hint · platform',
+        'uapv':              'Client hint · platform version',
+        'uaw':               'Client hint · WoW64'
       }},
     { name: 'GA4 (on the wire)', id: 'ga4_wire', scope: { endpoint: ['ga4'] },
       keys: [
         'en', 'tid', 'v', 'cid', 'sid', 'sct', 'seg', '_p', '_s', 'uid',
         'dl', 'dr', 'dt', 'ul', 'sr', 'cu', '_et', '_ee', '_fv', '_ss', '_nsi',
         'gcs', 'gcd', 'dma', 'dma_cps', 'npa', 'gtm', 'ir', 'tt', '_dbg',
-        'pscdl', 'frm', '_eu', 'ep.*', 'epn.*', 'up.*', 'upn.*', 'pr*', 'sst.*'
+        'pscdl', 'frm', '_eu', 'ep.*', 'epn.*', 'up.*', 'upn.*', 'pr*', 'sst.*',
+        // From live hits.
+        'tfd', 'tag_exp',
+        // Named but unlabelled — see the note in the Meta group.
+        'gaf', 'rcb', '_tu', 'tcfd',
+        // The same client-hint block Google Ads sends; off by default for the
+        // same reason.
+        'uaa', 'uab', 'uafvl', 'uamb', 'uap', 'uapv', 'uaw'
       ], labels: {
         'en':      'GA4 event name',
         'tid':     'Measurement id (G-XXXXXXX)',
@@ -452,7 +513,16 @@
         'up.*':    'User property (string)',
         'upn.*':   'User property (number)',
         'pr*':     'Item in the items array — pr1, pr2, … each one packed',
-        'sst.*':   'Server-side tagging metadata'
+        'sst.*':   'Server-side tagging metadata',
+        'tfd':     'Time from page load to this hit (ms)',
+        'tag_exp': 'Google tag experiment ids active for this hit',
+        'uaa':     'Client hint · CPU architecture',
+        'uab':     'Client hint · CPU bitness',
+        'uafvl':   'Client hint · browser brand and full version list',
+        'uamb':    'Client hint · mobile (1 = yes)',
+        'uap':     'Client hint · platform',
+        'uapv':    'Client hint · platform version',
+        'uaw':     'Client hint · WoW64'
       }},
     { name: 'Universal Analytics (on the wire)', id: 'ua_wire', scope: { endpoint: ['ga/ua'] },
       keys: ['v', 'tid', 't', 'cid', 'uid', 'dl', 'dr', 'dt', 'ul', 'sr', 'ec',
@@ -483,7 +553,8 @@
   // history in every event and blow the localStorage quota within a few hits.
   var BLOCKLIST = ['ls.__tealium_cap', 'ls.__tealium_cap_fields', 'ls.__tealium_cap_custom',
                    'ls.__tealium_cap_ui', 'ls.__tealium_cap_sources',
-                   'ls.__tealium_cap_migrated', 'ss.__tealium_cap'];
+                   'ls.__tealium_cap_migrated', 'ls.__tealium_cap_disc',
+                   'ss.__tealium_cap'];
   // Ticked on first run.
   var DEFAULT_ON = [
     'tealium_event', 'page_category', 'page_currency',
@@ -526,7 +597,29 @@
     'ga4_wire:en', 'ga4_wire:tid', 'ga4_wire:cid', 'ga4_wire:sid',
     'ga4_wire:cu', 'ga4_wire:gcs', 'ga4_wire:gcd', 'ga4_wire:npa',
     'ga4_wire:ep.*', 'ga4_wire:epn.*', 'ga4_wire:up.*', 'ga4_wire:pr*',
-    'ua_wire:t', 'ua_wire:tid', 'ua_wire:ec', 'ua_wire:ea', 'ua_wire:el'
+    'ua_wire:t', 'ua_wire:tid', 'ua_wire:ec', 'ua_wire:ea', 'ua_wire:el',
+    // ── Catalogued from live captures ────────────────────────────────────────
+    // Cataloguing a key REMOVES it from the Uncatalogued block, so anything here
+    // that used to show up there has to be ticked or it would go from visible to
+    // invisible. Everything below was visible before and stays visible.
+    //
+    // Deliberately NOT ticked, and the only ones: fb_wire:expv2[*, tag_exp and
+    // the seven client-hint parameters in each Google group. That is ~46 of the
+    // ~100 parameters on a Google or Meta hit and none of it answers a tagging
+    // question — it is browser fingerprint and feature-flag machinery. They are
+    // catalogued and labelled, so tick them in the picker when you want them.
+    'fb_wire:a', 'fb_wire:cdl', 'fb_wire:ler', 'fb_wire:plt', 'fb_wire:tz',
+    'fb_wire:aems', 'fb_wire:iw', 'fb_wire:o', 'fb_wire:tm',
+    'gads_wire:en', 'gads_wire:is_vtc', 'gads_wire:pscdl', 'gads_wire:hn',
+    'gads_wire:bg', 'gads_wire:cid', 'gads_wire:ipr', 'gads_wire:rmt_tld',
+    'gads_wire:guid', 'gads_wire:async', 'gads_wire:fmt', 'gads_wire:rfmt',
+    'gads_wire:ept', 'gads_wire:rcb', 'gads_wire:_tu', 'gads_wire:tcfd',
+    'ga4_wire:tfd', 'ga4_wire:gaf', 'ga4_wire:rcb', 'ga4_wire:_tu', 'ga4_wire:tcfd',
+    'uet_wire:tcf', 'uet_wire:lg', 'uet_wire:rn', 'uet_wire:bo', 'uet_wire:tm',
+    'uet_wire:cdb', 'uet_wire:src', 'uet_wire:vids', 'uet_wire:pi',
+    'uet_wire:sc', 'uet_wire:sv',
+    'rdt_wire:category', 'rdt_wire:name',
+    'tci.event_id'
   ];
   // Newly catalogued keys are ticked here so a fresh install still shows them.
   // An existing install already has its own tick list in localStorage and will
@@ -620,6 +713,101 @@
   ];
   // Library and profile assets are requests, but not events — never log them.
   var NET_IGNORE = /(^|\.)tiqcdn\.com$/i;
+  // ───────────────────────────────────────────────────────────────────────────
+  // CONSOLE PILLS — one look tells you who the hit went to.
+  //
+  // Keyed by endpoint id, so the two-entry vendors (gads, ga4) share one style.
+  // 'tag' replaces the generic PIXEL badge: a row that says META reads faster
+  // than one that says PIXEL and makes you go and find the endpoint name.
+  //
+  // The colours approximate each vendor's primary brand colour, adjusted where
+  // two of them would otherwise be indistinguishable at pill size — Meta and
+  // Google Ads are both blue, so Meta keeps the deeper one. Clarity and Awin are
+  // the two I am least sure of and are picked mainly to stay distinct from the
+  // rest; if you know the real brand values, this map is the only place to change
+  // them and nothing else needs touching. Text colour is not stored: it is
+  // computed from the background so any colour you drop in stays readable.
+  // ───────────────────────────────────────────────────────────────────────────
+  var VENDOR_PILL = {
+    'fb/tr':   { tag: 'META',    colour: '#0866ff' },  // Meta blue
+    'rp.gif':  { tag: 'REDDIT',  colour: '#ff4500' },  // Reddit orange-red
+    'ga4':     { tag: 'GA4',     colour: '#f9ab00' },  // Google Analytics amber
+    'ga/ua':   { tag: 'UA',      colour: '#a65200' },  // darker: legacy
+    'gads':    { tag: 'GADS',    colour: '#4285f4' },  // Google blue
+    'uet':     { tag: 'UET',     colour: '#008373' },  // Bing teal
+    'clarity': { tag: 'CLARITY', colour: '#9c27b0' },  // approximate
+    'awin':    { tag: 'AWIN',    colour: '#d81b60' }   // approximate
+  };
+  var PILL_VENDOR_FALLBACK = '#ec407a';  // a vendor endpoint with no entry above
+  var PILL_BEACON  = '#26c6da';          // Tealium collect
+  var PILL_VISITOR = '#4527a0';          // Tealium visitor service
+  // utag calls are the site's own intent and the reference every beacon is
+  // compared against, so they get a colour family no vendor uses (green) AND a
+  // ring, which is what makes them findable while scrolling past a wall of
+  // vendor pills.
+  var PILL_VIEW      = '#1b7f3b';
+  var PILL_LINK      = '#5f9e26';
+  var PILL_RECOVERED = '#616161';
+  // ───────────────────────────────────────────────────────────────────────────
+  // DISCOVERY — the vendors that are NOT in the list above.
+  //
+  // Everything up to here can only find hits somebody already knew to look for.
+  // The interesting failure of a tag audit is the opposite one: a pixel nobody
+  // remembers adding, or one a vendor's own library loads behind your back. So
+  // every request that does NOT match a known endpoint gets a second look.
+  //
+  // Two rules keep this from ruining the tool.
+  //
+  // FIRST: discovery is a SURVEY, not a capture. A property page makes a few
+  // hundred requests; recorded as normal rows they would blow past MAX_ROWS and
+  // MAX_BYTES within two page views and evict the real captures — the feature
+  // would destroy the thing it is meant to support. So discoveries go to their
+  // own store, with their own budget, deduplicated by host + path SHAPE rather
+  // than per hit: one line per endpoint, with a count. Read it, and when
+  // something turns out to matter, promote it to a NET_ENDPOINTS entry above and
+  // it gets the full treatment.
+  //
+  // SECOND: attribution beats pattern-matching. Guessing "does this look like
+  // tracking" from the URL alone can only ever recognise shapes I thought of,
+  // which is precisely the problem being solved. The stack knows better: the
+  // script that made the request is on it. So DISC_TEALIUM identifies utag's own
+  // code, every script utag loads is remembered (transitively — a library loaded
+  // BY a Tealium-loaded library still counts), and each request is labelled with
+  // who actually fired it. A pixel Tealium did not fire is still worth seeing,
+  // and knowing that it wasn't Tealium is itself the finding.
+  // ───────────────────────────────────────────────────────────────────────────
+  // utag's own code, by URL. Anything whose stack reaches one of these is a hit
+  // Tealium made directly rather than one a vendor library made for it.
+  var DISC_TEALIUM = /(^|\.)tiqcdn\.com\/|\/utag(\.js|\.sync\.js|\/)/i;
+  // Never a tracking hit whatever the query string says: a library with a
+  // cache-busting ?v= is still a library.
+  var DISC_ASSET = /\.(js|mjs|cjs|css|less|scss|woff2?|ttf|otf|eot|map|wasm|mp4|webm|ogv|ogg|mp3|wav|flac|pdf|zip|gz|ico|svg|txt|xml|webmanifest)(\?|#|$)/i;
+  // Content images. A .gif with a query string is treated as pixel-shaped
+  // because nothing serves resized content GIFs any more; the others need a
+  // reason beyond their extension, which is what keeps image CDNs out of the
+  // registry (/photo.jpg?w=400 is a resize, not a beacon).
+  var DISC_IMAGE = /\.(png|jpe?g|webp|avif|bmp)(\?|#|$)/i;
+  var DISC_GIF   = /\.gif(\?|#|$)/i;
+  // Path words that mean 'this endpoint exists to be told things'. Deliberately
+  // conservative: 'tag' and 'api' are omitted because they match half the web.
+  var DISC_PATH_HINT = new RegExp('(^|[\\/._-])(' + [
+    'pixel', 'pxl', 'track(ing)?', 'collect', 'beacon', 'events?', 'analytics',
+    'telemetry', 'impressions?', 'conv(ersion)?', 'measure', 'idsync',
+    'usersync', 'cksync', 'match(ing)?', 'hit', 'rum', 'metrics', 'activity',
+    'audience', 'retarget(ing)?', 'tr', 'v\\d/t'
+  ].join('|') + ')([\\/._-]|\\d|$)', 'i');
+  // Parameter NAMES that carry an identity. One of these on a third-party
+  // request is a strong tell even when the path says nothing.
+  var DISC_ID_PARAM = /^(uid|cid|sid|vid|did|pid|tid|uuid|guid|aid|user_?id|client_?id|session_?id|visitor_?id|device_?id|_ga|_fbp|fbp|idfa|aaid|adid|gclid|msclkid|dclid|ttclid|li_fat_id|external_id)$/i;
+  // Parameter NAMES that habitually carry the page or referrer URL. Handing the
+  // server the address of the page you are on has exactly one purpose.
+  var DISC_URL_PARAM = /^(dl|dr|du|url|u|page|page_?url|loc|location|href|ref|referr?er|r|d|src_?url|document_?location)$/i;
+  var DISC_KEY       = '__tealium_cap_disc';
+  var DISC_MAX       = 300;      // endpoints remembered, least-recently-seen evicted
+  var DISC_MAX_PARAMS = 40;      // parameter names kept per endpoint
+  var DISC_FLUSH_MS  = 400;      // registry writes are debounced, see discFlush()
+  // Second-level public suffixes, so rentaroof.co.uk is one site and not two.
+  var DISC_TWO_LEVEL = /\.(co|com|org|net|ac|gov|edu|sch|ltd|plc|me|in|or|ne)\.[a-z]{2,3}$/i;
   // Attributes that are SUPPOSED to differ between the utag payload and the
   // beacon, so comparing them would only produce noise: the timestamp and random
   // are stamped per hit, and 'ut.event' reports the last view rather than this
@@ -677,6 +865,23 @@
       'ga4_wire:cu', 'ga4_wire:gcs', 'ga4_wire:gcd', 'ga4_wire:npa',
       'ga4_wire:ep.*', 'ga4_wire:epn.*', 'ga4_wire:up.*', 'ga4_wire:pr*',
       'ua_wire:t', 'ua_wire:tid', 'ua_wire:ec', 'ua_wire:ea', 'ua_wire:el'
+    ] },
+    // 5.9 catalogues what live captures showed sitting in the Uncatalogued block.
+    // Every key here was already visible there, so ticking it changes nothing
+    // about what you see — only about whether it arrives with a name.
+    { v: '5.9', keys: [
+      'fb_wire:a', 'fb_wire:cdl', 'fb_wire:ler', 'fb_wire:plt', 'fb_wire:tz',
+      'fb_wire:aems', 'fb_wire:iw', 'fb_wire:o', 'fb_wire:tm',
+      'gads_wire:en', 'gads_wire:is_vtc', 'gads_wire:pscdl', 'gads_wire:hn',
+      'gads_wire:bg', 'gads_wire:cid', 'gads_wire:ipr', 'gads_wire:rmt_tld',
+      'gads_wire:guid', 'gads_wire:async', 'gads_wire:fmt', 'gads_wire:rfmt',
+      'gads_wire:ept', 'gads_wire:rcb', 'gads_wire:_tu', 'gads_wire:tcfd',
+      'ga4_wire:tfd', 'ga4_wire:gaf', 'ga4_wire:rcb', 'ga4_wire:_tu', 'ga4_wire:tcfd',
+      'uet_wire:tcf', 'uet_wire:lg', 'uet_wire:rn', 'uet_wire:bo', 'uet_wire:tm',
+      'uet_wire:cdb', 'uet_wire:src', 'uet_wire:vids', 'uet_wire:pi',
+      'uet_wire:sc', 'uet_wire:sv',
+      'rdt_wire:category', 'rdt_wire:name',
+      'tci.event_id'
     ] }
   ];
   // ───────────────────────────────────────────────────────────────────────────
@@ -726,15 +931,20 @@
   }
   // Which of the two sources is live. Unticking one stops it being recorded AND
   // hides what was already recorded; ticking it again brings those rows back.
+  // 'disc' is absent from an existing install's saved object, and undefined is
+  // not false, so discovery arrives switched on without a migration.
   function sources() {
     var s = ls(SOURCES_KEY, null);
-    if (!s || typeof s !== 'object') { s = { udo: true, net: true }; lsSet(SOURCES_KEY, s); }
+    if (!s || typeof s !== 'object') { s = { udo: true, net: true, disc: true }; lsSet(SOURCES_KEY, s); }
     return s;
   }
   function setSource(k, on) { var s = sources(); s[k] = !!on; lsSet(SOURCES_KEY, s); }
   // Rows captured by v4.x carry no _kind, and every one of them is a utag event.
   function kindOf(r) { return r && r._kind === 'net' ? 'net' : 'udo'; }
-  function sourceOn(kind) { return sources()[kind === 'net' ? 'net' : 'udo'] !== false; }
+  function sourceOn(kind) {
+    if (kind === 'disc') return sources().disc !== false;
+    return sources()[kind === 'net' ? 'net' : 'udo'] !== false;
+  }
   function customKeys() { return ls(CUSTOM_KEY, []); }
   function groups() {
     var g = CATALOGUE.slice();
@@ -1018,25 +1228,68 @@
     return s.length > MAX_VALUE_LEN ? s.slice(0, MAX_VALUE_LEN) + '…' : s;
   }
   function pad(s, n) { while (s.length < n) s += ' '; return s; }
+  // ── Pill styling ───────────────────────────────────────────────────────────
+  function hexRgb(h) {
+    h = String(h || '').replace('#', '');
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    var n = parseInt(h, 16);
+    return isNaN(n) ? [0, 0, 0] : [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  // Text colour is derived, never configured, so a brand colour can be dropped
+  // into VENDOR_PILL without also having to work out whether it needs white or
+  // black text. WCAG relative luminance; the threshold is tuned by eye for pill
+  // sizes rather than for body text.
+  function textOn(hex) {
+    var c = hexRgb(hex).map(function (v) {
+      v /= 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    return (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) > 0.42 ? '#111' : '#fff';
+  }
+  // Mixed toward white rather than a fixed light grey, so the ring always reads
+  // as the same hue as the pill it surrounds.
+  function lighten(hex, f) {
+    var c = hexRgb(hex).map(function (v) { return Math.round(v + (255 - v) * f); });
+    return 'rgb(' + c.join(',') + ')';
+  }
+  function pillCss(colour, ring) {
+    return 'background:' + colour + ';color:' + textOn(colour) +
+           ';padding:1px 6px;border-radius:3px;font-weight:bold' +
+           (ring ? ';border:2px solid ' + lighten(colour, 0.55) + ';letter-spacing:.4px' : '');
+  }
+  // A vendor pill carries the vendor's brand colour and its name; Tealium's own
+  // traffic keeps cyan (collect) and indigo (visitor lookup); utag calls get
+  // green plus a ring — see VENDOR_PILL for why.
+  function pillFor(row) {
+    if (row._kind === 'net') {
+      if (row._type === 'visitor') return { colour: PILL_VISITOR, tag: 'VISITOR', ring: false };
+      if (row._type === 'pixel') {
+        var v = VENDOR_PILL[row._net && row._net.endpoint];
+        return { colour: (v && v.colour) || PILL_VENDOR_FALLBACK,
+                 tag: (v && v.tag) || 'PIXEL', ring: false };
+      }
+      return { colour: PILL_BEACON, tag: 'BEACON', ring: false };
+    }
+    return {
+      colour: row._via === 'recovered' ? PILL_RECOVERED
+            : row._type === 'view' ? PILL_VIEW : PILL_LINK,
+      tag: row._type.toUpperCase(),
+      ring: true
+    };
+  }
   function print(row) {
     var on = enabledSet();
     var isOn = displayMatcher(row);
-    // Beacons get their own two colours so a wire hit is never mistaken for a
-    // utag call while scrolling the console: cyan for an outbound event, indigo
-    // for a visitor-profile lookup.
-    var colour = row._kind === 'net'
-                 ? (row._type === 'visitor' ? '#5c6bc0'
-                  : row._type === 'pixel'   ? '#ec407a' : '#26c6da')
-               : row._via === 'recovered' ? '#9e9e9e'
-               : row._type === 'view'     ? '#42a5f5' : '#66bb6a';
+    var pill = pillFor(row);
+    var colour = pill.colour;
     var label = row._kind === 'net'
       ? (row._net.endpoint + (row._net.event ? '  ' + row._net.event : '') +
          (row._net.batch ? '  [' + row._net.batch.index + '/' + row._net.batch.of + ']' : ''))
       : ((on['interaction_id'] && row.data.interaction_id) ||
          (on['page_category'] && row.data.page_category) || row._type);
     console.groupCollapsed(
-      '%c' + row._type.toUpperCase() + '%c  ' + label + '  %c' + row._path,
-      'background:' + colour + ';color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold',
+      '%c' + pill.tag + '%c  ' + label + '  %c' + row._path,
+      pillCss(colour, pill.ring),
       'font-weight:bold',
       'color:#999;font-weight:normal'
     );
@@ -1286,6 +1539,225 @@
       if (e.test.test(u)) return e;
     }
     return null;
+  }
+  // ───────────────────────────────────────────────────────────────────────────
+  // PROVENANCE — which script made this request.
+  //
+  // The stack is read by throwing and catching, which is the only portable way
+  // to get one. Frames from this userscript are not http(s) URLs (the managers
+  // use extension: and blob: schemes), so the URL regex skips them for free.
+  //
+  // An async hop does NOT lose the attribution: the frame still names the file
+  // the callback was defined in, and it is the SCRIPT that identifies a vendor,
+  // not the moment it chose to fire.
+  // ───────────────────────────────────────────────────────────────────────────
+  // Chrome writes '    at fn (URL:line:col)', Safari and Firefox write
+  // 'fn@URL:line:col'. Grabbing the whole URL-ish token and stripping the
+  // trailing :line:col handles all three — and, unlike matching up to the first
+  // ':digits', it survives a URL that carries a port.
+  var stackScriptRe = /https?:\/\/[^\s()'"]+/g;
+  function stackScripts() {
+    var s = '';
+    try { throw new Error(); } catch (e) { s = (e && e.stack) || ''; }
+    if (!s) return [];
+    var out = [], m;
+    stackScriptRe.lastIndex = 0;
+    while ((m = stackScriptRe.exec(s))) {
+      var u = m[0].replace(/:\d+(?::\d+)?$/, '');
+      if (u && out.indexOf(u) < 0) out.push(u);
+      if (out.length > 24) break;          // deep stacks tell us nothing extra
+    }
+    return out;
+  }
+  // Every script Tealium loaded, and every script those went on to load. Held in
+  // memory only: it describes this page, and a stale entry from an earlier page
+  // would attribute a request to a script that is no longer even loaded.
+  var tealiumScripts = {};
+  function noteScript(src) {
+    try {
+      var abs = absUrl(src);
+      if (!abs || abs.indexOf('http') !== 0) return;
+      if (DISC_TEALIUM.test(abs)) { tealiumScripts[abs] = true; return; }
+      var frames = stackScripts();
+      for (var i = 0; i < frames.length; i++) {
+        if (DISC_TEALIUM.test(frames[i]) || tealiumScripts[frames[i]]) {
+          tealiumScripts[abs] = true;      // transitive: piggybacked libraries
+          return;
+        }
+      }
+    } catch (e) {}
+  }
+  function shortScript(u) {
+    try {
+      var p = new URL(u, location.href);
+      var f = p.pathname.split('/').filter(Boolean).pop() || p.pathname;
+      return p.hostname + '/' + f;
+    } catch (e) { return String(u || '').slice(0, 80); }
+  }
+  // 'tealium:direct' — utag's own code is on the stack.
+  // 'tealium:via'    — a script utag loaded is on the stack. This is the
+  //                    piggyback case and the one worth hunting.
+  // 'page'           — the site's own code.
+  // 'unknown'        — no usable stack, which is every PerformanceObserver
+  //                    replay: those are observed after the fact, not wrapped.
+  // ONE pass, nearest frame first, and the nearest match wins whichever kind it
+  // is. Scanning for utag's own code across the whole stack before considering
+  // the loaded libraries would be wrong: utag.js sits at the bottom of the stack
+  // for anything fired during its initialisation, so a Taboola pixel with
+  // [tfa.js, utag.js] on the stack would be reported as Tealium firing it
+  // directly. The immediate caller is the one that made the request.
+  function attributionFor() {
+    var frames = stackScripts(), i;
+    for (i = 0; i < frames.length; i++) {
+      if (DISC_TEALIUM.test(frames[i])) return { origin: 'tealium:direct', script: frames[i] };
+      if (tealiumScripts[frames[i]]) return { origin: 'tealium:via', script: frames[i] };
+    }
+    // Inside a utag call the stack may be entirely inline page code, but we know
+    // where we are: the wrapper set activeUdo before calling through.
+    if (activeUdo) return { origin: 'tealium:direct', script: '' };
+    if (frames.length) return { origin: 'page', script: frames[0] };
+    return { origin: 'unknown', script: '' };
+  }
+  // ───────────────────────────────────────────────────────────────────────────
+  // DISCOVERY REGISTRY
+  // ───────────────────────────────────────────────────────────────────────────
+  function baseDomain(h) {
+    h = String(h || '').toLowerCase().replace(/\.$/, '');
+    var p = h.split('.');
+    if (p.length <= 2) return h;
+    return p.slice(DISC_TWO_LEVEL.test(h) ? -3 : -2).join('.');
+  }
+  function isThirdParty(h) {
+    if (!h) return false;
+    var mine = baseDomain(location.hostname);
+    return !!mine && baseDomain(h) !== mine;
+  }
+  // /log/1234/trc and /log/5678/trc are one endpoint, not two. Anything that
+  // looks like an id is collapsed so the registry lists ENDPOINTS, not hits.
+  function pathTemplate(p) {
+    return String(p || '/').split('/').map(function (seg) {
+      if (!seg) return seg;
+      if (/^\d+$/.test(seg)) return '*';
+      if (/^[0-9a-f]{8,}$/i.test(seg)) return '*';
+      if (/\d{4,}/.test(seg)) return '*';
+      if (seg.length > 24) return '*';
+      return seg;
+    }).join('/');
+  }
+  // Why this request looks like tracking. Empty means it does not, and nothing
+  // is recorded. Returning the REASONS rather than a boolean is deliberate: the
+  // registry shows them, so a false positive is diagnosable instead of magic.
+  function trackingWhy(abs, path, q, method, body, transport, origin) {
+    var why = [];
+    if (transport === 'beacon') why.push('sendBeacon');
+    if (origin.indexOf('tealium') === 0) why.push('fired by Tealium');
+    if ((method || 'GET').toUpperCase() === 'POST' && body) why.push('POST body');
+    if (DISC_PATH_HINT.test(path)) why.push('tracking path');
+    if (DISC_GIF.test(abs)) why.push('pixel-shaped');
+    var names = Object.keys(q || {});
+    for (var i = 0; i < names.length; i++) {
+      var k = names[i];
+      if (DISC_ID_PARAM.test(k)) { why.push('identity parameter'); break; }
+    }
+    for (var j = 0; j < names.length; j++) {
+      var v = q[names[j]];
+      v = Array.isArray(v) ? v[0] : v;
+      if (typeof v === 'string' && v.length > 12 && /^https?:/i.test(v)) {
+        why.push('page URL in query'); break;
+      }
+      if (DISC_URL_PARAM.test(names[j]) && typeof v === 'string' && v.indexOf(location.hostname) >= 0) {
+        why.push('page URL in query'); break;
+      }
+    }
+    return why;
+  }
+  var discMap = null, discDirty = false, discTimer = null;
+  function discAll() {
+    if (!discMap) { var m = ls(DISC_KEY, {}); discMap = (m && typeof m === 'object' && !Array.isArray(m)) ? m : {}; }
+    return discMap;
+  }
+  // Debounced: an unknown endpoint hit in a tight loop must not cost a JSON
+  // round-trip through localStorage per request.
+  function discFlush() {
+    if (!discDirty) return;
+    discDirty = false;
+    try {
+      var m = discAll(), keys = Object.keys(m);
+      if (keys.length > DISC_MAX) {
+        keys.sort(function (a, b) { return (m[a].last_ms || 0) - (m[b].last_ms || 0); })
+            .slice(0, keys.length - DISC_MAX)
+            .forEach(function (k) { delete m[k]; });
+      }
+      lsSet(DISC_KEY, m);
+    } catch (e) {}
+  }
+  function discSchedule() {
+    discDirty = true;
+    if (discTimer) return;
+    discTimer = setTimeout(function () { discTimer = null; discFlush(); }, DISC_FLUSH_MS);
+  }
+  function discConsider(abs, method, body, transport) {
+    var host = '', path = abs;
+    try { var U = new URL(abs, location.href); host = U.hostname; path = U.pathname; } catch (e) { return; }
+    if (!host || !isThirdParty(host)) return;
+    if (NET_IGNORE.test(host)) return;
+    if (DISC_ASSET.test(abs)) return;
+    var q = {};
+    try { q = parseQuery((new URL(abs, location.href)).search); } catch (e) {}
+    var att = attributionFor();
+    var why = trackingWhy(abs, path, q, method, body, transport, att.origin);
+    // A content image needs a reason beyond being an image; without one it is a
+    // photo, not a beacon.
+    if (!why.length) return;
+    if (DISC_IMAGE.test(abs) && why.length === 1 && why[0] === 'pixel-shaped') return;
+    // Deduped only once it is known to be a real candidate. netSeen is a 200-slot
+    // window shared with the beacon path, so running every asset request through
+    // it would let a burst of images evict a beacon's entry inside the 3s window
+    // and log that beacon twice — discovery must not corrupt the capture it sits
+    // next to.
+    if (netDupe(abs)) return;
+    var tmpl = pathTemplate(path);
+    var key = host + '|' + tmpl;
+    var m = discAll(), e = m[key], now = new Date();
+    var first = !e;
+    if (first) {
+      e = m[key] = {
+        host: host, path: tmpl, count: 0,
+        first_seen: now.toISOString().slice(11, 23), last_seen: '',
+        origin: att.origin, script: att.script ? shortScript(att.script) : '',
+        transports: {}, methods: {}, params: [], why: [], pages: [], sample: ''
+      };
+    }
+    e.count++;
+    e.last_seen = now.toISOString().slice(11, 23);
+    e.last_ms = now.getTime();
+    e.transports[transport] = (e.transports[transport] || 0) + 1;
+    var mm = (method || 'GET').toUpperCase();
+    e.methods[mm] = (e.methods[mm] || 0) + 1;
+    if (!e.sample) e.sample = String(abs).slice(0, 500);
+    // An endpoint first seen from a vendor library but later fired directly by
+    // utag (or the other way round) is worth knowing about, so attribution is
+    // upgraded rather than frozen at whatever the first sighting happened to be.
+    if (att.origin.indexOf('tealium') === 0 && e.origin.indexOf('tealium') !== 0) {
+      e.origin = att.origin;
+      e.script = att.script ? shortScript(att.script) : '';
+    }
+    why.forEach(function (w) { if (e.why.indexOf(w) < 0) e.why.push(w); });
+    if (e.pages.indexOf(location.pathname) < 0 && e.pages.length < 5) e.pages.push(location.pathname);
+    Object.keys(q).forEach(function (k) {
+      if (e.params.length < DISC_MAX_PARAMS && e.params.indexOf(k) < 0) e.params.push(k);
+    });
+    discSchedule();
+    if (first) {
+      console.log('%c[CAP] new endpoint%c  ' + host + tmpl + '%c\n' +
+        '        ' + (e.origin === 'tealium:direct' ? 'fired by Tealium directly'
+                    : e.origin === 'tealium:via'    ? 'fired by ' + e.script + ' (Tealium-loaded)'
+                    : e.origin === 'page'           ? 'fired by page code — ' + e.script
+                    : 'origin unknown (seen after the fact)') +
+        '  ·  ' + why.join(', '),
+        'background:#8d6e63;color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold',
+        'color:#ddd;font-weight:bold', 'color:#999');
+    }
   }
   // Repeated parameters are kept as an array rather than overwritten: that is how
   // a UDO array arrives on the wire, and collapsing it would fake a mismatch
@@ -1567,7 +2039,14 @@
     try {
       var abs = absUrl(url);
       var ep = endpointFor(abs);
-      if (!ep) return false;
+      // Not a known endpoint: hand it to discovery, which decides whether it
+      // looks like a tracking hit and remembers it as a survey line if so.
+      if (!ep) {
+        if (sourceOn('disc')) {
+          try { discConsider(abs, method, body, transport); } catch (e) {}
+        }
+        return false;
+      }
       if (!sourceOn('net')) return false;      // paused: nothing parsed, nothing stored
       if (netDupe(abs)) return false;
       var q = {}, host = '', path = abs;
@@ -1708,6 +2187,24 @@
         ns.__cap = true;
         Object.defineProperty(HTMLImageElement.prototype, 'src', {
           get: dsc.get, set: ns, configurable: true, enumerable: dsc.enumerable
+        });
+      }
+    } catch (e) {}
+    // script.src — not a request we log, but the record of WHO loaded WHAT,
+    // which is what lets a later pixel be attributed to the library that fired
+    // it rather than to nobody. Same prototype-setter trick as the image hook.
+    // Scripts inserted with setAttribute('src') bypass this, exactly as images
+    // do; those requests still get discovered, just with origin 'page'.
+    try {
+      var sdsc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
+      if (sdsc && sdsc.set && !sdsc.set.__cap) {
+        var nss = function (v) {
+          try { noteScript(v); } catch (e) {}
+          return sdsc.set.call(this, v);
+        };
+        nss.__cap = true;
+        Object.defineProperty(HTMLScriptElement.prototype, 'src', {
+          get: sdsc.get, set: nss, configurable: true, enumerable: sdsc.enumerable
         });
       }
     } catch (e) {}
@@ -1859,7 +2356,7 @@
   // Drag listeners use capture on window so they still fire while the pointer
   // is over the host.
   // ───────────────────────────────────────────────────────────────────────────
-  var badgeEl = null, panelEl = null, hostEl = null, toastEl = null, fieldsEl = null;
+  var badgeEl = null, panelEl = null, hostEl = null, toastEl = null, fieldsEl = null, discEl = null;
   // Badge reads "utag · beacons", and drops the half you have paused.
   function refreshBadge() {
     if (!badgeEl) return;
@@ -1956,6 +2453,69 @@
     fieldsEl.appendChild(el('div', 'font-size:10px;color:#777;margin-top:4px',
       'All catalogued keys are always captured — these boxes filter the console and the exports, including past captures.'));
   }
+  // Newest first, because the thing you just triggered is the thing you are
+  // looking for. Tealium-fired endpoints sort above the rest within that.
+  function discSorted() {
+    discFlush();
+    var m = discAll();
+    return Object.keys(m).map(function (k) { return m[k]; }).sort(function (a, b) {
+      var at = a.origin.indexOf('tealium') === 0, bt = b.origin.indexOf('tealium') === 0;
+      if (at !== bt) return at ? -1 : 1;
+      return (b.last_ms || 0) - (a.last_ms || 0);
+    });
+  }
+  function renderDiscovered() {
+    discEl.textContent = '';
+    var list = discSorted();
+    if (!list.length) {
+      discEl.appendChild(el('div', 'font-size:11px;color:#888;padding:6px 0',
+        'Nothing yet. Every third-party request that does not match a known ' +
+        'endpoint is checked here; browse the site and anything tracking-shaped ' +
+        'will appear.'));
+      return;
+    }
+    discEl.appendChild(el('div', 'font-size:10px;color:#777;margin:2px 0 6px',
+      list.length + ' endpoint' + (list.length === 1 ? '' : 's') + ' not in the catalogue. ' +
+      'These are surveyed, not captured — promote one to NET_ENDPOINTS to get full rows.'));
+    list.forEach(function (d) {
+      var box = el('div', 'border-top:1px solid #333;padding:5px 0');
+      var tone = d.origin.indexOf('tealium') === 0 ? '#ffb74d' : d.origin === 'page' ? '#90a4ae' : '#777';
+      var head = el('div', 'display:flex;gap:6px;align-items:baseline;justify-content:space-between');
+      head.appendChild(el('span', 'font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#eee;' +
+        'word-break:break-all;min-width:0', d.host + d.path));
+      head.appendChild(el('span', 'font-size:10px;color:#888;flex:none', '×' + d.count));
+      box.appendChild(head);
+      box.appendChild(el('div', 'font-size:10px;color:' + tone + ';margin-top:2px',
+        (d.origin === 'tealium:direct' ? 'fired by Tealium directly'
+       : d.origin === 'tealium:via'    ? 'fired by ' + d.script + '  (Tealium-loaded)'
+       : d.origin === 'page'           ? 'fired by page code — ' + d.script
+       : 'origin unknown — seen after the fact')));
+      box.appendChild(el('div', 'font-size:10px;color:#777;margin-top:1px',
+        d.why.join(', ') + '  ·  ' + Object.keys(d.transports).join('/') +
+        '  ·  ' + d.first_seen.slice(0, 8) + '→' + d.last_seen.slice(0, 8)));
+      if (d.params && d.params.length) {
+        box.appendChild(el('div', 'font-family:ui-monospace,Menlo,monospace;font-size:10px;' +
+          'color:#8a8a8a;margin-top:2px;word-break:break-all', d.params.join(' ')));
+      }
+      discEl.appendChild(box);
+    });
+    var row = el('div', 'display:flex;gap:4px;margin:8px 0 2px');
+    var bc = el('button', 'flex:1;background:#3a3a3a;border:0;color:#eee;border-radius:5px;' +
+      'padding:5px 6px;font:700 11px inherit;cursor:pointer', 'Copy JSON');
+    bc.addEventListener('click', function () {
+      copy(JSON.stringify(discSorted(), null, 2), function (ok) {
+        toast(ok ? 'Copied ' + list.length + ' endpoints' : 'Copy failed', ok);
+      });
+    });
+    var bx = el('button', 'flex:none;background:#4a2222;border:0;color:#eee;border-radius:5px;' +
+      'padding:5px 8px;font:700 11px inherit;cursor:pointer', 'Clear');
+    bx.addEventListener('click', function () {
+      discMap = {}; discDirty = true; discFlush();
+      renderDiscovered(); refreshBadge(); toast('Discovery cleared');
+    });
+    row.appendChild(bc); row.appendChild(bx);
+    discEl.appendChild(row);
+  }
   // A half-built widget is worse than none: hostEl would be set, so every later
   // attempt would short-circuit on the `if (hostEl)` guard and the pill would
   // stay missing for the rest of the session with no way back. So a failure
@@ -1967,7 +2527,7 @@
       buildUIInner();
     } catch (e) {
       try { if (hostEl && hostEl.parentNode) hostEl.parentNode.removeChild(hostEl); } catch (e2) {}
-      hostEl = badgeEl = panelEl = toastEl = fieldsEl = null;
+      hostEl = badgeEl = panelEl = toastEl = fieldsEl = discEl = null;
       console.log('%c[CAP] panel failed to build — retrying shortly%c  ' + (e && e.message),
         'background:#e53935;color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold', 'color:#999');
     }
@@ -2011,8 +2571,9 @@
     var srcWrap = el('div', 'margin:2px 0 9px');
     srcWrap.appendChild(el('div', 'font-weight:700;color:#8ecdf5;font-size:11px;' +
       'text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px', 'Sources'));
-    [['udo', 'utag events  ·  view / link / track', '#66bb6a'],
-     ['net', 'Beacons & vendor pixels  ·  i.gif, /event, Meta, GA4, …', '#26c6da']].forEach(function (s) {
+    [['udo', 'utag events  ·  view / link / track', PILL_VIEW],
+     ['net', 'Beacons & vendor pixels  ·  i.gif, /event, Meta, GA4, …', PILL_BEACON],
+     ['disc', 'Discover unknown vendors  ·  survey, not capture', '#8d6e63']].forEach(function (s) {
       var lab = el('label', 'display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:11px;color:#ddd');
       var cb = document.createElement('input');
       cb.type = 'checkbox';
@@ -2028,24 +2589,51 @@
       lab.appendChild(el('span', null, s[1]));
       srcWrap.appendChild(lab);
     });
+    // Colour legend, built from the same map the console reads, so it can never
+    // drift out of step with the pills it is explaining.
+    var legend = el('div', 'display:flex;flex-wrap:wrap;gap:3px;margin:6px 0 0');
+    [{ tag: 'VIEW', colour: PILL_VIEW, ring: true }, { tag: 'LINK', colour: PILL_LINK, ring: true },
+     { tag: 'BEACON', colour: PILL_BEACON }, { tag: 'VISITOR', colour: PILL_VISITOR }]
+      .concat(Object.keys(VENDOR_PILL).map(function (k) { return VENDOR_PILL[k]; }))
+      .forEach(function (p) {
+        legend.appendChild(el('span',
+          'background:' + p.colour + ';color:' + textOn(p.colour) + ';font:700 9px inherit;' +
+          'padding:1px 4px;border-radius:3px;flex:none' +
+          (p.ring ? ';border:1px solid ' + lighten(p.colour, 0.55) : ''), p.tag));
+      });
+    srcWrap.appendChild(legend);
     srcWrap.appendChild(el('div', 'font-size:10px;color:#777;margin-top:4px',
       'Unticked is not recorded and not exported. Rows captured while it was on come back when you tick it again.'));
     panelEl.appendChild(srcWrap);
     var bFields = mkBtn('⚙  Fields…');
+    var bDisc   = mkBtn('🛰  Discovered…');
     var bCopy   = mkBtn('Copy JSON');
     var bJSON   = mkBtn('Download JSON');
     var bCSV    = mkBtn('Download CSV');
     var bClear  = mkBtn('Clear captures', '#4a2222');
-    [bFields, bCopy, bJSON, bCSV, bClear].forEach(function (b) { panelEl.appendChild(b); });
+    [bFields, bDisc, bCopy, bJSON, bCSV, bClear].forEach(function (b) { panelEl.appendChild(b); });
     toastEl = el('div', 'margin-top:6px;font-size:11px;opacity:0;transition:opacity .2s;min-height:14px');
     panelEl.appendChild(toastEl);
     fieldsEl = el('div', 'display:none;border-top:1px solid #333;margin-top:8px;padding-top:4px');
     panelEl.appendChild(fieldsEl);
+    discEl = el('div', 'display:none;border-top:1px solid #333;margin-top:8px;padding-top:4px');
+    panelEl.appendChild(discEl);
+    function discLabel() {
+      var n = Object.keys(discAll()).length;
+      return '🛰  Discovered' + (n ? ' (' + n + ')' : '') + (discEl.style.display === 'none' ? '…' : ' ▾');
+    }
     bFields.addEventListener('click', function () {
       var open = fieldsEl.style.display === 'none';
       fieldsEl.style.display = open ? 'block' : 'none';
       bFields.textContent = open ? '⚙  Fields ▾' : '⚙  Fields…';
       if (open) renderFields();
+    });
+    bDisc.textContent = discLabel();
+    bDisc.addEventListener('click', function () {
+      var open = discEl.style.display === 'none';
+      discEl.style.display = open ? 'block' : 'none';
+      if (open) renderDiscovered();
+      bDisc.textContent = discLabel();
     });
     bCopy.addEventListener('click', function () {
       var n = load().length;
@@ -2187,26 +2775,60 @@
     }));
     return rows;
   };
-  // __capSources()            -> current state
-  // __capSources(true, false) -> utag on, beacons off
-  window.__capSources = function (udo, net) {
+  // __capSources()                  -> current state
+  // __capSources(true, false)       -> utag on, beacons off
+  // __capSources(true, true, false) -> discovery off
+  window.__capSources = function (udo, net, disc) {
     if (arguments.length) {
       setSource('udo', !!udo);
       setSource('net', arguments.length > 1 ? !!net : sources().net !== false);
+      setSource('disc', arguments.length > 2 ? !!disc : sources().disc !== false);
       refreshBadge();
     }
     var s = sources();
     console.log('%c[CAP] sources%c  utag ' + (s.udo !== false ? 'on' : 'OFF') +
-      '  ·  beacons ' + (s.net !== false ? 'on' : 'OFF'),
+      '  ·  beacons ' + (s.net !== false ? 'on' : 'OFF') +
+      '  ·  discovery ' + (s.disc !== false ? 'on' : 'OFF'),
       'background:#66bb6a;color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold', 'color:#999');
     return s;
+  };
+  // The survey of everything that is NOT in the catalogue. One line per
+  // endpoint, not per hit — see the DISCOVERY block for why.
+  window.__capDiscovered = function () {
+    var list = discSorted();
+    if (!list.length) {
+      console.log('%c[CAP] nothing discovered yet%c  browse the site with discovery on',
+        'color:#8d6e63;font-weight:bold', 'color:#999');
+      return list;
+    }
+    console.table(list.map(function (d) {
+      return {
+        endpoint: d.host + d.path, hits: d.count,
+        fired_by: d.origin === 'tealium:via' ? 'Tealium → ' + d.script
+                : d.origin === 'tealium:direct' ? 'Tealium (direct)'
+                : d.origin === 'page' ? 'page — ' + d.script : 'unknown',
+        why: d.why.join(', '),
+        transport: Object.keys(d.transports).join('/'),
+        params: (d.params || []).slice(0, 12).join(' '),
+        first: d.first_seen, last: d.last_seen
+      };
+    }));
+    console.log('%c[CAP] %c' + list.length + ' undocumented endpoint' + (list.length === 1 ? '' : 's') +
+      '. Sample URLs are on the returned objects; promote anything real to NET_ENDPOINTS.',
+      'background:#8d6e63;color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold', 'color:#999');
+    return list;
+  };
+  window.__capDiscoveredClear = function () {
+    discMap = {}; discDirty = true; discFlush();
+    if (discEl && discEl.style.display !== 'none') renderDiscovered();
+    console.log('%c[CAP] discovery cleared', 'color:#8d6e63');
   };
   // Force the pill back: tears down whatever is there, forgets the stored drag
   // position, and rebuilds at the default corner. First thing to try if the pill
   // is missing — captures are unaffected either way, they are in localStorage.
   window.__capPanel = function () {
     try { if (hostEl && hostEl.parentNode) hostEl.parentNode.removeChild(hostEl); } catch (e) {}
-    hostEl = badgeEl = panelEl = toastEl = fieldsEl = null;
+    hostEl = badgeEl = panelEl = toastEl = fieldsEl = discEl = null;
     try { localStorage.removeItem(UI_KEY); } catch (e) {}
     buildUI();
     console.log('%c[CAP] panel ' + (hostEl ? 'rebuilt bottom-right' : 'could NOT be built'),
@@ -2226,8 +2848,8 @@
     console.log('%c[CAP] fields reset to defaults', 'color:#66bb6a');
   };
   console.log(
-    '%c[CAP] armed%c  utag + beacons · panel bottom-right · __capDump() · __capNet() · ' +
-    '__capCSV() · __capSources() · __capClear() · __capResetFields()',
+    '%c[CAP] armed%c  utag + beacons + discovery · panel bottom-right · __capDump() · __capNet() · ' +
+    '__capDiscovered() · __capCSV() · __capSources() · __capClear() · __capResetFields()',
     'background:#66bb6a;color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold',
     'color:#999'
   );
