@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      5.5
-// @description  Logs every utag view/link event AND every client-to-server Tealium beacon (i.gif, rp.gif, /event), with an on-screen field picker and JSON/CSV export. Persists across page loads and tabs.
+// @version      5.6
+// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit), with an on-screen field picker and JSON/CSV export. Persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
 // @match        *://*.huurwoningen.com/*
@@ -24,14 +24,21 @@
 //
 //   udo  — calls into utag: utag.view / utag.link / utag.track. This is what the
 //          site ASKED to be tracked.
-//   net  — the requests utag then makes to Tealium's collect layer: i.gif,
-//          rp.gif, /event and the visitor-service lookups. This is what the
-//          server ACTUALLY received.
+//   net  — the requests utag then makes: Tealium's own collect layer (i.gif,
+//          /event, the visitor-service lookups) AND the third-party pixels its
+//          tags fire — Meta, GA4, Google Ads, Microsoft UET, Clarity, Awin,
+//          Reddit. This is what ACTUALLY left the browser, and to whom.
 //
 // They are not redundant. Mapped attributes, consent gating and tag-level
 // filtering all sit between the two, so an attribute can be present in the utag
 // payload and absent from the beacon. Each beacon is linked back to the utag
 // call that produced it and the difference is reported.
+//
+// A vendor pixel is shown as its own row type and is NEVER diffed against the
+// utag payload: it carries the vendor's parameter names, not the UDO, so the
+// two have no attributes in common and a diff would be pure noise. What it
+// answers instead is "did this tag fire, to which account, with what event
+// name, value and consent signal" — which is the question a tag audit asks.
 (function () {
   'use strict';
   // ───────────────────────────────────────────────────────────────────────────
@@ -207,6 +214,8 @@
       // captured rather than dropped, but it points at a mistyped Cookie data
       // source in the profile and is worth fixing there.
       'cp.__gcl_au',
+      'cp._gcl_aw', 'cp._gcl_dc', 'cp._fbc', 'cp._clck', 'cp._clsk',
+      'cp._awin_awc', 'cp.awc',
       'cp.g_state', 'cp._ta', 'cp._tas', 'cp._tac',
       'clarity.project_id', 'meta.facebook.pixel_id',
       'fb_event_id_*'
@@ -215,9 +224,16 @@
       'cp._ga':      'GA client id',
       'cp._ga_*':    'GA4 session state (per property)',
       'cp._fbp':     'Meta browser id',
+      'cp._fbc':     'Meta click id (set from fbclid on the landing page)',
+      'cp._clck':    'Clarity visitor id',
+      'cp._clsk':    'Clarity session id',
+      'cp._awin_awc': 'Awin click reference (awc), stored by the MasterTag',
+      'cp.awc':      'Awin click reference as set on the landing page',
       'cp._uetsid':  'Microsoft UET session id',
       'cp._uetvid':  'Microsoft UET visitor id',
       'cp._gcl_au':  'Google Ads first-party click id',
+      'cp._gcl_aw':  'Google Ads click id from a Search click (gclid)',
+      'cp._gcl_dc':  'Google Ads click id from a Display click (dclid)',
       // Correction: I previously labelled this "mistyped, always empty". A live
       // capture proved otherwise — it carries a normal Google Ads value. There is
       // a real cookie by this name here; Google's own is the single-underscore
@@ -260,6 +276,204 @@
         'sh':             'Screen height reported to Reddit',
         'sw':             'Screen width reported to Reddit',
         'db':             'Reddit pixel diagnostics flags'
+      }},
+    // ─────────────────────────────────────────────────────────────────────────
+    // The remaining scoped groups follow the same rule as Reddit's: these are
+    // the VENDOR's parameter names as they appear on the wire, recognised only
+    // on that vendor's endpoint. Several of them collide across vendors — 'v',
+    // 'id', 'ev', 'ec', 'r' and 'sid' each mean something different to Meta,
+    // UET and GA4 — and scoping is what keeps a Meta label off a GA4 hit.
+    //
+    // Only parameters whose meaning is documented or unambiguous are labelled.
+    // Anything else is left out of the catalogue entirely rather than guessed
+    // at: it still shows up in the Uncatalogued block, where it is honest.
+    // ─────────────────────────────────────────────────────────────────────────
+    { name: 'Meta pixel (on the wire)', id: 'fb_wire', scope: { endpoint: ['fb/tr'] },
+      keys: [
+        'id', 'ev', 'eid', 'dl', 'rl', 'if', 'ts', 'sw', 'sh', 'v', 'r', 'ec',
+        'fbp', 'fbc', 'it', 'coo', 'rqm', 'cd[*', 'ud[*'
+      ], labels: {
+        'id':   'Meta pixel id',
+        'ev':   'Meta event name (PageView, Purchase, …)',
+        'eid':  'Event id — deduplicates against the Conversions API',
+        'dl':   'Page URL',
+        'rl':   'Referrer URL',
+        'if':   'Fired inside an iframe',
+        'ts':   'Client timestamp (epoch ms)',
+        'sw':   'Screen width reported to Meta',
+        'sh':   'Screen height reported to Meta',
+        'v':    'Meta pixel version',
+        'r':    'Pixel release channel (stable, …)',
+        'ec':   'Event count — the nth event from this pixel on this page',
+        'fbp':  'Meta browser id (the _fbp cookie value)',
+        'fbc':  'Meta click id (the _fbc cookie, derived from fbclid)',
+        'it':   'Pixel initialisation time (epoch ms)',
+        'coo':  'First-party cookie use enabled',
+        'rqm':  'Transport the pixel chose (GET / POST)',
+        'cd[*': 'Custom data — value, currency, content_ids, content_type …',
+        'ud[*': 'Advanced matching user data — hashed em, ph, fn, external_id …'
+      }},
+    { name: 'Awin conversion (on the wire)', id: 'awin_wire', scope: { endpoint: ['awin'] },
+      keys: [
+        'tt', 'tv', 'merchant', 'amount', 'cr', 'ref', 'parts', 'ch', 'vc',
+        'testmode', 'cks', 'pt'
+      ], labels: {
+        'tt':       'Tracking type — ns = new sale',
+        'tv':       'Awin tracking version (2 = image tag)',
+        'merchant': 'Awin advertiser id',
+        'amount':   'Commissionable order value',
+        'cr':       'Currency of amount',
+        'ref':      'Your order reference — deduplicates the sale',
+        'parts':    'Commission group breakdown — GROUP:amount',
+        'ch':       'Attributed channel (aw = affiliate)',
+        'vc':       'Voucher code used',
+        'testmode': 'Test mode (1 = not booked as a real sale)',
+        'cks':      'Awin click reference (the awc value)',
+        'pt':       'Product-level tracking string (AW:P|…)'
+      }},
+    { name: 'Microsoft UET (on the wire)', id: 'uet_wire', scope: { endpoint: ['uet'] },
+      keys: [
+        'ti', 'evt', 'ea', 'ec', 'el', 'ev', 'gv', 'gc', 'Ver', 'mid', 'sid',
+        'vid', 'p', 'r', 'tl', 'lt', 'sw', 'sh', 'msclkid', 'prodid',
+        'pagetype', 'asc', 'uach'
+      ], labels: {
+        'ti':      'UET tag id',
+        'evt':     'Hit type — pageLoad, custom, …',
+        'ea':      'Event action',
+        'ec':      'Event category',
+        'el':      'Event label',
+        'ev':      'Event value',
+        'gv':      'Revenue / goal value',
+        'gc':      'Currency of gv',
+        'Ver':     'UET library version',
+        'mid':     'Message id — unique per hit',
+        'sid':     'UET session id',
+        'vid':     'UET visitor id',
+        'p':       'Page URL',
+        'r':       'Referrer URL',
+        'tl':      'Page title',
+        'lt':      'Page load time (ms)',
+        'sw':      'Screen width reported to UET',
+        'sh':      'Screen height reported to UET',
+        'msclkid': 'Microsoft click id',
+        'prodid':  'Product id — remarketing (ecomm_prodid)',
+        'pagetype':'Page type — remarketing (ecomm_pagetype)',
+        'asc':     'Consent Mode · ad_storage (G = granted, D = denied)',
+        'uach':    'User-agent client hints'
+      }},
+    // Clarity uploads a JSON body whose envelope is a POSITIONAL ARRAY, not an
+    // object: 'e' is [version, sequence, start, duration, projectId, userId,
+    // sessionId, pageNum, …]. There is no key per field to catalogue, so the
+    // top-level members are all that can be named here. The value of this entry
+    // is seeing THAT Clarity uploaded and how big the payload was — for the
+    // contents, read the array positionally or use Clarity's own debug mode.
+    { name: 'Clarity upload (on the wire)', id: 'clarity_wire', scope: { endpoint: ['clarity'] },
+      keys: ['e', 'a', 'p', 'd'], labels: {
+        'e': 'Envelope — positional: version, sequence, start, duration, projectId, userId, sessionId, pageNum',
+        'a': 'Analytics events in this upload',
+        'p': 'Playback (session recording) events in this upload',
+        'd': 'Dimension / metadata entries in this upload'
+      }},
+    { name: 'Google Ads (on the wire)', id: 'gads_wire', scope: { endpoint: ['gads'] },
+      keys: [
+        'label', 'value', 'currency_code', 'oid', 'data', 'gtm', 'gcs', 'gcd',
+        'dma', 'dma_cps', 'npa', 'auid', 'gclaw', 'gad_source',
+        'ct_cookie_present', 'random', 'cv', 'fst', 'url', 'ref', 'tiba',
+        'u_h', 'u_w', 'u_tz', 'frm'
+      ], labels: {
+        'label':             'Conversion label — the AW-xxxxx/label pair',
+        'value':             'Conversion value',
+        'currency_code':     'Currency of value',
+        'oid':               'Order / transaction id — deduplicates the conversion',
+        'data':              'Custom conversion parameters (key=value pairs)',
+        'gtm':               'Google tag container version',
+        'gcs':               'Consent Mode signal — G1 plus the ad/analytics storage bits',
+        'gcd':               'Consent Mode detail — per-purpose state including defaults',
+        'dma':               'EEA / DMA rules apply (1 = yes)',
+        'dma_cps':           'DMA consent-per-service state',
+        'npa':               'Non-personalised ads (1 = yes)',
+        'auid':              'Google Ads first-party click id (the _gcl_au value)',
+        'gclaw':             'Google Ads click id (gclid) carried from the landing URL',
+        'gad_source':        'Ad source from the landing URL',
+        'ct_cookie_present': 'Conversion-tracking cookie was present',
+        'random':            'Cache buster',
+        'cv':                'Conversion tag version',
+        'fst':               'First-seen timestamp for this tag',
+        'url':               'Page URL',
+        'ref':               'Referrer URL',
+        'tiba':              'Page title',
+        'u_h':               'Screen height reported to Google',
+        'u_w':               'Screen width reported to Google',
+        'u_tz':              'Timezone offset (minutes)',
+        'frm':               'Fired inside a frame'
+      }},
+    { name: 'GA4 (on the wire)', id: 'ga4_wire', scope: { endpoint: ['ga4'] },
+      keys: [
+        'en', 'tid', 'v', 'cid', 'sid', 'sct', 'seg', '_p', '_s', 'uid',
+        'dl', 'dr', 'dt', 'ul', 'sr', 'cu', '_et', '_ee', '_fv', '_ss', '_nsi',
+        'gcs', 'gcd', 'dma', 'dma_cps', 'npa', 'gtm', 'ir', 'tt', '_dbg',
+        'pscdl', 'frm', '_eu', 'ep.*', 'epn.*', 'up.*', 'upn.*', 'pr*', 'sst.*'
+      ], labels: {
+        'en':      'GA4 event name',
+        'tid':     'Measurement id (G-XXXXXXX)',
+        'v':       'Measurement Protocol version (2 = GA4)',
+        'cid':     'GA client id (from the _ga cookie)',
+        'sid':     'GA session id',
+        'sct':     'Session count for this visitor',
+        'seg':     'Session engaged (1 = yes)',
+        '_p':      'Page load id — the same on every hit of this page view',
+        '_s':      'Hit sequence number within this page load',
+        'uid':     'User id',
+        'dl':      'Page URL',
+        'dr':      'Referrer URL',
+        'dt':      'Page title',
+        'ul':      'User language',
+        'sr':      'Screen resolution',
+        'cu':      'Currency',
+        '_et':     'Engagement time since the previous hit (ms)',
+        '_ee':     'Enhanced measurement produced this event',
+        '_fv':     'First visit (1 = yes)',
+        '_ss':     'Session start (1 = yes)',
+        '_nsi':    'A new session id was issued',
+        'gcs':     'Consent Mode signal — G1 plus the ad/analytics storage bits',
+        'gcd':     'Consent Mode detail — per-purpose state including defaults',
+        'dma':     'EEA / DMA rules apply (1 = yes)',
+        'dma_cps': 'DMA consent-per-service state',
+        'npa':     'Non-personalised ads (1 = yes)',
+        'gtm':     'Google tag container version',
+        'ir':      'Ignore referrer',
+        'tt':      'Traffic type override',
+        '_dbg':    'GA4 debug mode — hit goes to DebugView',
+        'pscdl':   'Privacy Sandbox cookie-deprecation label',
+        'frm':     'Fired inside a frame',
+        '_eu':     'Feature-usage bitmask',
+        'ep.*':    'Event parameter (string)',
+        'epn.*':   'Event parameter (number)',
+        'up.*':    'User property (string)',
+        'upn.*':   'User property (number)',
+        'pr*':     'Item in the items array — pr1, pr2, … each one packed',
+        'sst.*':   'Server-side tagging metadata'
+      }},
+    { name: 'Universal Analytics (on the wire)', id: 'ua_wire', scope: { endpoint: ['ga/ua'] },
+      keys: ['v', 'tid', 't', 'cid', 'uid', 'dl', 'dr', 'dt', 'ul', 'sr', 'ec',
+             'ea', 'el', 'ev', 'ni', 'cu', 'z'], labels: {
+        'v':   'Measurement Protocol version (1 = Universal Analytics)',
+        'tid': 'Property id (UA-XXXXXX)',
+        't':   'Hit type — pageview, event, transaction …',
+        'cid': 'GA client id',
+        'uid': 'User id',
+        'dl':  'Page URL',
+        'dr':  'Referrer URL',
+        'dt':  'Page title',
+        'ul':  'User language',
+        'sr':  'Screen resolution',
+        'ec':  'Event category',
+        'ea':  'Event action',
+        'el':  'Event label',
+        'ev':  'Event value',
+        'ni':  'Non-interaction hit',
+        'cu':  'Currency',
+        'z':   'Cache buster'
       }}
   ];
   // Keys ending in '*' match by prefix — for values whose names carry a random
@@ -283,11 +497,36 @@
     'consent_decision', 'tci.consent_type',
     'google_ads_data_redaction', 'google_url_passthrough',
     'tealium.collect.endpoint', 'cp.__gcl_au',
+    // Vendor click ids. Catalogued in an UNSCOPED group, so they have to be
+    // ticked: cataloguing alone would have moved them out of Uncatalogued and
+    // straight into invisibility on installs that map these cookies.
+    'cp._fbc', 'cp._gcl_aw', 'cp._gcl_dc', 'cp._awin_awc', 'cp.awc',
+    'cp._clck', 'cp._clsk',
     // Scoped keys are ticked under their qualified id.
     'rdt_wire:event', 'rdt_wire:id', 'rdt_wire:uuid', 'rdt_wire:click_id',
     'rdt_wire:em', 'rdt_wire:m.conversionId', 'rdt_wire:m.*',
     'rdt_wire:opt_out', 'rdt_wire:sh', 'rdt_wire:sw',
-    'event', 'reddit_pixel_event_id_*', 'fb_event_id_*'
+    'event', 'reddit_pixel_event_id_*', 'fb_event_id_*',
+    // The vendor wire groups are ticked down to what identifies the hit: which
+    // account it went to, what it called the event, what it deduplicates on and
+    // what consent it claimed. The transport noise (cache busters, screen size,
+    // library versions) stays catalogued but unticked — tick it in the picker
+    // when a specific question needs it.
+    'fb_wire:id', 'fb_wire:ev', 'fb_wire:eid', 'fb_wire:cd[*', 'fb_wire:ud[*',
+    'fb_wire:fbp', 'fb_wire:fbc',
+    'awin_wire:tt', 'awin_wire:merchant', 'awin_wire:amount', 'awin_wire:cr',
+    'awin_wire:ref', 'awin_wire:parts', 'awin_wire:ch', 'awin_wire:vc',
+    'awin_wire:testmode', 'awin_wire:cks',
+    'uet_wire:ti', 'uet_wire:evt', 'uet_wire:ea', 'uet_wire:ec', 'uet_wire:el',
+    'uet_wire:gv', 'uet_wire:gc', 'uet_wire:asc',
+    'clarity_wire:e',
+    'gads_wire:label', 'gads_wire:value', 'gads_wire:currency_code',
+    'gads_wire:oid', 'gads_wire:data', 'gads_wire:gcs', 'gads_wire:gcd',
+    'gads_wire:npa', 'gads_wire:auid',
+    'ga4_wire:en', 'ga4_wire:tid', 'ga4_wire:cid', 'ga4_wire:sid',
+    'ga4_wire:cu', 'ga4_wire:gcs', 'ga4_wire:gcd', 'ga4_wire:npa',
+    'ga4_wire:ep.*', 'ga4_wire:epn.*', 'ga4_wire:up.*', 'ga4_wire:pr*',
+    'ua_wire:t', 'ua_wire:tid', 'ua_wire:ec', 'ua_wire:ea', 'ua_wire:el'
   ];
   // Newly catalogued keys are ticked here so a fresh install still shows them.
   // An existing install already has its own tick list in localStorage and will
@@ -331,7 +570,53 @@
     { id: 'dle',             kind: 'visitor', test: /\/dle(\?|\/|$)/i },
     { id: 'datacloud',       kind: 'visitor', test: /datacloud\.tealiumiq\.com\//i },
     { id: 'visitor-service', kind: 'visitor', test: /visitor-service\.tealiumiq\.com\//i },
-    { id: 'collect',         kind: 'collect', test: /collect\.tealiumiq\.com\//i }
+    { id: 'collect',         kind: 'collect', test: /collect\.tealiumiq\.com\//i },
+    // ─── VENDOR PIXELS ───────────────────────────────────────────────────────
+    // Third-party endpoints a Tealium tag fires. None of them is a Tealium
+    // endpoint and none carries the UDO, so they are typed 'vendor': shown as
+    // pixel rows and never diffed against the utag payload.
+    //
+    // Each entry names the parameter that carries the vendor's own event name
+    // ('eventKey'), because none of them agrees on it — Meta says ev, UET says
+    // evt, GA4 says en. That value becomes the row headline in the console.
+    //
+    // Every test is either host-guarded or matches a path specific enough that
+    // it cannot be confused with a site's own routes. The library files
+    // (connect.facebook.net, bat.js, clarity.ms/tag/…, dwin1.com) are requests
+    // but not events, and match nothing here on purpose.
+    // Meta pixel. rqm=POST hits carry the same parameters in the body.
+    { id: 'fb/tr', kind: 'vendor', vendor: 'Meta', eventKey: ['ev'],
+      host: /(^|\.)facebook\.com$/i, test: /\/tr\/?(\?|$)/i },
+    // Awin conversion tag. tv=2 is the image tag; the .php spellings are the
+    // older form and are still in the wild.
+    { id: 'awin', kind: 'vendor', vendor: 'Awin', eventKey: ['tt'],
+      host: /(^|\.)awin1\.com$/i, test: /\/s?read\.(img|php)(\?|$)/i },
+    // Microsoft Advertising UET. /actionp/ is the variant some tag versions use.
+    { id: 'uet', kind: 'vendor', vendor: 'Microsoft Advertising (UET)', eventKey: ['evt', 'ea'],
+      host: /(^|\.)bat\.bing\.(com|net)$/i, test: /\/actionp?\/\d+(\?|$)/i },
+    // Microsoft Clarity. A POST with a JSON body, not a pixel — see the
+    // catalogue group for why its fields cannot be broken out individually.
+    { id: 'clarity', kind: 'vendor', vendor: 'Microsoft Clarity',
+      host: /(^|\.)clarity\.ms$/i, test: /\/(collect|c\.gif)(\?|$)/i },
+    // Google Ads conversions and remarketing. The conversion label lives in the
+    // path for /conversion/AW-xxx/ hits and in the 'label' parameter otherwise.
+    { id: 'gads', kind: 'vendor', vendor: 'Google Ads', eventKey: ['label'],
+      test: /\/pagead\/(1p-)?(viewthrough)?(conversion|user-list)\//i },
+    { id: 'gads', kind: 'vendor', vendor: 'Google Ads',
+      test: /\/ads\/ga-audiences(\?|$)/i },
+    // GA4. /g/collect is distinctive enough to need no host guard, which is what
+    // catches a server-side container on a first-party domain.
+    { id: 'ga4', kind: 'vendor', vendor: 'Google Analytics 4', eventKey: ['en'],
+      test: /\/g\/(s\/)?collect(\?|$)/i },
+    { id: 'ga4', kind: 'vendor', vendor: 'Google Analytics 4', eventKey: ['en'],
+      test: /\/mp\/collect(\?|$)/i },
+    // Universal Analytics, host-guarded because a bare /collect is far too
+    // generic. Only fires if something is still sending v=1 hits. 'collect' is
+    // anchored as the first or second path segment so this cannot also claim the
+    // GA4 /g/collect above it.
+    { id: 'ga/ua', kind: 'vendor', vendor: 'Universal Analytics', eventKey: ['t'],
+      host: /(^|\.)google-analytics\.com$|(^|\.)analytics\.google\.com$/i,
+      test: /\/\/[^\/]+\/([jr]\/)?collect(\?|$)/i }
   ];
   // Library and profile assets are requests, but not events — never log them.
   var NET_IGNORE = /(^|\.)tiqcdn\.com$/i;
@@ -370,7 +655,29 @@
     { v: '5.2', keys: ['rdt_wire:event', 'rdt_wire:id', 'rdt_wire:uuid', 'rdt_wire:click_id',
                        'rdt_wire:em', 'rdt_wire:m.conversionId', 'rdt_wire:m.*',
                        'rdt_wire:opt_out', 'rdt_wire:sh', 'rdt_wire:sw'] },
-    { v: '5.5', keys: ['event', 'reddit_pixel_event_id_*', 'fb_event_id_*'] }
+    { v: '5.5', keys: ['event', 'reddit_pixel_event_id_*', 'fb_event_id_*'] },
+    // 5.6 catalogues six more vendor pixels. Every key below was previously
+    // either absent or shown as uncatalogued, so an existing install has no
+    // opinion on any of them and ticking them takes nothing away.
+    { v: '5.6', keys: [
+      'cp._fbc', 'cp._gcl_aw', 'cp._gcl_dc', 'cp._awin_awc', 'cp.awc',
+      'cp._clck', 'cp._clsk',
+      'fb_wire:id', 'fb_wire:ev', 'fb_wire:eid', 'fb_wire:cd[*', 'fb_wire:ud[*',
+      'fb_wire:fbp', 'fb_wire:fbc',
+      'awin_wire:tt', 'awin_wire:merchant', 'awin_wire:amount', 'awin_wire:cr',
+      'awin_wire:ref', 'awin_wire:parts', 'awin_wire:ch', 'awin_wire:vc',
+      'awin_wire:testmode', 'awin_wire:cks',
+      'uet_wire:ti', 'uet_wire:evt', 'uet_wire:ea', 'uet_wire:ec', 'uet_wire:el',
+      'uet_wire:gv', 'uet_wire:gc', 'uet_wire:asc',
+      'clarity_wire:e',
+      'gads_wire:label', 'gads_wire:value', 'gads_wire:currency_code',
+      'gads_wire:oid', 'gads_wire:data', 'gads_wire:gcs', 'gads_wire:gcd',
+      'gads_wire:npa', 'gads_wire:auid',
+      'ga4_wire:en', 'ga4_wire:tid', 'ga4_wire:cid', 'ga4_wire:sid',
+      'ga4_wire:cu', 'ga4_wire:gcs', 'ga4_wire:gcd', 'ga4_wire:npa',
+      'ga4_wire:ep.*', 'ga4_wire:epn.*', 'ga4_wire:up.*', 'ga4_wire:pr*',
+      'ua_wire:t', 'ua_wire:tid', 'ua_wire:ec', 'ua_wire:ea', 'ua_wire:el'
+    ] }
   ];
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
@@ -1201,6 +1508,19 @@
     if (changed.length) row._net.changed = changed;
     if (total) row._net.missing_total = total;
   }
+  // The headline for a vendor pixel. Every vendor names its event parameter
+  // differently, so the endpoint declares which one to read. Google Ads is the
+  // exception: its conversion id sits in the path (/pagead/conversion/AW-123/…),
+  // which is the only identifying thing a remarketing hit has.
+  function vendorEvent(info, d) {
+    var keys = info.endpoint.eventKey || ['event'];
+    for (var i = 0; i < keys.length; i++) {
+      var v = d[keys[i]];
+      if (v !== undefined && v !== null && v !== '') return asText(v);
+    }
+    var m = /\/pagead\/(?:1p-)?(?:viewthrough)?(?:conversion|user-list)\/([^\/?]+)/i.exec(info.path || '');
+    return m ? m[1] : '';
+  }
   function buildNet(info) {
     var d = info.params || {};
     // On a first-party collect domain the account and profile are in the PATH,
@@ -1229,7 +1549,7 @@
         route: fp ? (fp[1] + ' / ' + fp[2]) : '',
         // A vendor pixel has no tealium_event; its own event name is the useful
         // headline, so fall back to it for pixels only.
-        event: d.tealium_event || (info.endpoint.kind === 'vendor' ? (d.event || '') : ''),
+        event: d.tealium_event || (info.endpoint.kind === 'vendor' ? vendorEvent(info, d) : ''),
         bytes_out: info.bytes_out || 0
       },
       data: {}
@@ -1692,7 +2012,7 @@
     srcWrap.appendChild(el('div', 'font-weight:700;color:#8ecdf5;font-size:11px;' +
       'text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px', 'Sources'));
     [['udo', 'utag events  ·  view / link / track', '#66bb6a'],
-     ['net', 'Server-side beacons  ·  i.gif, rp.gif, /event', '#26c6da']].forEach(function (s) {
+     ['net', 'Beacons & vendor pixels  ·  i.gif, /event, Meta, GA4, …', '#26c6da']].forEach(function (s) {
       var lab = el('label', 'display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:11px;color:#ddd');
       var cb = document.createElement('input');
       cb.type = 'checkbox';
