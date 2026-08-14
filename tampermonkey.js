@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      7.4
+// @version      7.5
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -536,7 +536,12 @@
       keys: [
         'id', 'e', 'tag_exp', 'gtm', 'cv', 'rv', 'tc', 'z',
         // Named but unlabelled — see the note in the Meta group.
-        'v', 't', 'pid', 'es', 'eid', 'u', 'h', 'tr', 'ti', 'ut'
+        'v', 't', 'pid', 'es', 'eid', 'u', 'h', 'tr', 'ti', 'ut',
+        // The /td ping. Same container talking about itself on a second path, so
+        // the parameters live here rather than in a group of their own.
+        'seq', 'exp', 'dl', 'tdp', 'frm', 'rtg',
+        // Named but unlabelled — see the note in the Meta group.
+        'slo', 'hlo', 'lst', 'bt', 'ct', 'jsp', 'pcid'
       ], labels: {
         'id':      'Container / tag id (AW-…, G-…, GTM-…)',
         'e':       'What is reported — gtm.init on load',
@@ -545,7 +550,29 @@
         'cv':      'Container version',
         'rv':      'Container release version',
         'tc':      'Tag count in the container',
-        'z':       'Cache buster'
+        'z':       'Cache buster',
+        'seq':     'Sequence number of this ping on the page',
+        'exp':     'Google tag experiment ids for this hit',
+        'dl':      'Page URL',
+        'tdp':     'Diagnostics payload — container id, then tag ids',
+        'frm':     'Fired inside a frame',
+        'rtg':     'Remarketing tag id the container is running'
+      }},
+    // PromptWatch posts JSON, so these keys are the FLATTENED body: the nested
+    // 'payload' object arrives as payload.href, payload.referrer and so on, and
+    // those dotted names are what the row actually carries.
+    { name: 'PromptWatch (on the wire)', id: 'pw_wire', scope: { endpoint: ['promptwatch'] },
+      keys: [
+        'project_id', 'action', 'version',
+        'payload.href', 'payload.referrer', 'payload.locale', 'payload.timezone'
+      ], labels: {
+        'project_id':        'PromptWatch project the hit is written to',
+        'action':            'What is being reported — the event name',
+        'version':           'Client library version',
+        'payload.href':      'Page URL',
+        'payload.referrer':  'Referrer URL',
+        'payload.locale':    'Browser locale',
+        'payload.timezone':  'Browser timezone'
       }},
     { name: 'GA4 (on the wire)', id: 'ga4_wire', scope: { endpoint: ['ga4'] },
       keys: [
@@ -642,6 +669,7 @@
                    'ls.__tealium_cap_ui', 'ls.__tealium_cap_sources',
                    'ls.__tealium_cap_migrated', 'ls.__tealium_cap_disc',
                    'ls.__tealium_cap_pills', 'ls.__tealium_cap_labels',
+                   'ls.__tealium_cap_groups',
                    'ss.__tealium_cap'];
   // Ticked on first run.
   var DEFAULT_ON = [
@@ -792,6 +820,18 @@
     // manages. On a Tealium site that is worth seeing rather than filtering out.
     { id: 'gtm', kind: 'vendor', vendor: 'Google Tag Manager (diagnostics)', eventKey: ['e'],
       host: /(^|\.)googletagmanager\.com$/i, test: /\/a(\?|$)/i },
+    // /td is the same conversation on a different path — the newer Google tag
+    // reports itself here, with the container in 'id' and the tag ids in 'tdp'.
+    // It shares the 'gtm' id deliberately: one pill, one switch, one catalogue
+    // group, exactly as the five Google Ads entries above share theirs. The path
+    // that matched is on the row's request line when you need to tell them apart.
+    { id: 'gtm', kind: 'vendor', vendor: 'Google Tag Manager (diagnostics)', eventKey: ['e'],
+      host: /(^|\.)googletagmanager\.com$/i, test: /\/td(\?|$)/i },
+    // PromptWatch, found by the discovery survey on rentaroof: a POST of JSON,
+    // loaded by its own client.min.js which GTM injects. The parameter names are
+    // the flattened body, so 'payload.href' is the literal captured key.
+    { id: 'promptwatch', kind: 'vendor', vendor: 'PromptWatch', eventKey: ['action'],
+      host: /(^|\.)promptwatch\.com$/i, test: /\/event(\?|$)/i },
     // GA4. /g/collect is distinctive enough to need no host guard, which is what
     // catches a server-side container on a first-party domain.
     { id: 'ga4', kind: 'vendor', vendor: 'Google Analytics 4', eventKey: ['en'],
@@ -832,6 +872,10 @@
     'uet':     { tag: 'UET',     colour: '#008373' },  // Bing teal
     'clarity': { tag: 'CLARITY', colour: '#9c27b0' },  // approximate
     'awin':    { tag: 'AWIN',    colour: '#d81b60' },  // approximate
+    // Brown, and not a brand value — I do not know PromptWatch's. Picked because
+    // it is the one family nothing else here occupies, which is the only job a
+    // pill colour has to do.
+    'promptwatch': { tag: 'PWATCH', colour: '#795548' },
     // Grey on purpose: GTM's ping measures nothing, it only proves GTM is here.
     // A brand colour would give it the same visual weight as a real marketing
     // hit, which is the wrong signal.
@@ -888,20 +932,31 @@
   // Identified by the URL of the script on the stack. Every script a container
   // loads inherits its owner, transitively, so a vendor library loaded by GTM is
   // still attributed to GTM three hops later.
+  //
+  // `short` and `colour` are what the inline fired-by label on the collapsed
+  // console line uses. Tealium takes the collect cyan it already owns in the
+  // legend and GTM stays in its grey family, so a hit fired by a container reads
+  // in the SAME colour wherever that container appears — which is the whole
+  // point of showing it inline: a META pixel labelled in GTM grey is visible
+  // while scrolling, without expanding anything.
+  //
+  // These are TEXT colours, so they run a shade lighter than the filled pills
+  // would: #5f6368 is fine inside a coloured box and mud as bare glyphs on a
+  // dark console.
   // ───────────────────────────────────────────────────────────────────────────
   var CONTAINERS = [
-    { id: 'tealium', name: 'Tealium',
+    { id: 'tealium', name: 'Tealium', short: 'Tealium', colour: '#26c6da',
       test: /(^|\.)tiqcdn\.com\/|\/utag(\.js|\.sync\.js|\/)/i },
     // gtm.js is a GTM container; gtag/js and gtag/destination are the Google tag.
     // Both are Google-managed and neither is Tealium, which is the distinction
     // that matters here, so they share one id.
-    { id: 'gtm', name: 'Google Tag Manager / gtag',
+    { id: 'gtm', name: 'Google Tag Manager / gtag', short: 'GTM', colour: '#9aa0a6',
       test: /(^|\.)googletagmanager\.com\/(gtm\.js|gtag\/|a(\?|$))|\/gtag\/js/i },
-    { id: 'adobe', name: 'Adobe Launch / DTM',
+    { id: 'adobe', name: 'Adobe Launch / DTM', short: 'Adobe', colour: '#fa0f00',
       test: /(^|\.)assets\.adobedtm\.com\/|\/(launch|satelliteLib)-[A-Za-z0-9]+(\.min)?\.js/i },
-    { id: 'commandersact', name: 'Commanders Act',
+    { id: 'commandersact', name: 'Commanders Act', short: 'CmdrsAct', colour: '#9575cd',
       test: /(^|\.)tagcommander\.com\/|\/tc_[A-Za-z0-9_]+\.js/i },
-    { id: 'segment', name: 'Segment',
+    { id: 'segment', name: 'Segment', short: 'Segment', colour: '#52bd94',
       test: /(^|\.)cdn\.segment\.(com|io)\/analytics/i }
   ];
   function containerById(id) {
@@ -989,6 +1044,7 @@
   var SOURCES_KEY = '__tealium_cap_sources';
   var PILLS_KEY   = '__tealium_cap_pills';
   var LABELS_KEY  = '__tealium_cap_labels';
+  var GROUPS_KEY  = '__tealium_cap_groups';   // which Fields groups are folded shut
   var MIGRATED_KEY = '__tealium_cap_migrated';
   // Cataloguing a key removes it from the Uncatalogued block, so on an existing
   // install — which already has its own tick list saved — a newly catalogued
@@ -1066,6 +1122,20 @@
   // it cannot fall behind it again; re-ticks anything a previous version left
   // catalogued but invisible.
   MIGRATIONS.push({ v: '6.3', keys: wireDefaults() });
+  // 7.5 promotes two endpoints the discovery survey turned up on live traffic:
+  // PromptWatch's ingest, and GTM's /td ping alongside the /a one already
+  // matched. Neither was ever captured, so nothing an install can have an
+  // opinion about is being changed — listed key by key rather than re-deriving
+  // wireDefaults(), which would also re-tick vendor parameters someone has since
+  // deliberately turned off.
+  MIGRATIONS.push({ v: '7.5', keys: [
+    'pw_wire:project_id', 'pw_wire:action', 'pw_wire:version',
+    'pw_wire:payload.href', 'pw_wire:payload.referrer',
+    'pw_wire:payload.locale', 'pw_wire:payload.timezone',
+    'gtm_wire:seq', 'gtm_wire:exp', 'gtm_wire:dl', 'gtm_wire:tdp',
+    'gtm_wire:frm', 'gtm_wire:rtg', 'gtm_wire:slo', 'gtm_wire:hlo',
+    'gtm_wire:lst', 'gtm_wire:bt', 'gtm_wire:ct', 'gtm_wire:jsp', 'gtm_wire:pcid'
+  ] });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
   // Clear between test runs.
@@ -1144,6 +1214,24 @@
     return Array.isArray(a) ? a : [];
   }
   function pillOn(key) { return !key || mutedPills().indexOf(key) < 0; }
+  // Fields groups fold. The default is what the group is FOR: the unscoped
+  // groups are the UDO attributes you tick by hand and they open; the scoped
+  // wire groups are a vendor's whole payload — 52 parameters for GA4 alone,
+  // ticked by subtraction and rarely touched — and they start folded, or the
+  // picker opens on a thousand-pixel scroll of things nobody was looking for.
+  function foldedGroups() {
+    var m = ls(GROUPS_KEY, null);
+    return m && typeof m === 'object' && !Array.isArray(m) ? m : {};
+  }
+  function groupFolded(g) {
+    var v = foldedGroups()[g.name];
+    return v == null ? !!g.scope : !!v;
+  }
+  function setGroupFolded(g, folded) {
+    var m = foldedGroups();
+    m[g.name] = !!folded;
+    lsSet(GROUPS_KEY, m);
+  }
   function setPillMuted(key, muted) {
     var a = mutedPills(), i = a.indexOf(key);
     if (muted && i < 0) a.push(key);
@@ -1565,6 +1653,53 @@
       key: key
     };
   }
+  // ── The inline fired-by chip ───────────────────────────────────────────────
+  // Attribution used to live inside the collapsed group, which meant the one
+  // question worth asking of a wall of rows — WHO fired this — could only be
+  // answered one expand at a time. It rides the headline instead, immediately
+  // after the vendor pill so the two colours sit side by side: on a healthy
+  // Tealium site every chip is the same cyan, and the GTM-grey one halfway down
+  // is the double-count you were looking for.
+  //
+  // Returns null when there is nothing worth a chip, so unattributed rows (every
+  // PerformanceObserver replay) stay quiet rather than printing a wall of
+  // identical greys that would drown the signal.
+  // Two filled pills side by side read as two labels of equal weight, and the
+  // row only has one identity — the vendor. So the container is coloured TEXT,
+  // bold, carrying the same hue its pill would have. Same signal, a quarter of
+  // the ink, and the vendor pill stays the loudest thing on the line.
+  //
+  // Colours are picked for text on a console background rather than for a filled
+  // chip: GTM's own #5f6368 and a slate #546e7a are legible inside a coloured box
+  // and nearly invisible as bare glyphs on dark.
+  var CHIP_PAGE     = '#90a4ae';  // fired by the page's own code, no container
+  var CHIP_CONFLICT = '#ff5252';  // stack and payload name different containers
+  function firedByChip(nn) {
+    if (!nn || !nn.fired_by) return null;
+    if (nn.fired_by_conflict) {
+      var stack = containerShort(nn.fired_by_id) || nn.fired_by;
+      var said  = containerShort(nn.fired_by_declared);
+      return { text: '⚠ ' + stack + (said ? ' ≠ ' + said : ''), colour: CHIP_CONFLICT };
+    }
+    if (nn.fired_by_id) {
+      var c = containerById(nn.fired_by_id);
+      return { text: (c && c.short) || nn.fired_by,
+               colour: (c && c.colour) || CHIP_PAGE,
+               // No stack, so the container is whatever the payload named. Real
+               // evidence, but weaker than a live stack, and the chip should not
+               // claim more than it knows.
+               faint: nn.fired_by_how === 'unknown' };
+    }
+    if (nn.fired_by_how === 'page') return { text: 'page', colour: CHIP_PAGE };
+    return null;
+  }
+  function containerShort(id) {
+    var c = containerById(id);
+    return c ? c.short : '';
+  }
+  function chipCss(colour, faint) {
+    return 'color:' + colour + ';font-weight:bold' + (faint ? ';opacity:.7' : '');
+  }
   // The legend, and the switch list — one array so a vendor added to
   // VENDOR_PILL becomes a working switch without being registered anywhere else.
   function legendPills() {
@@ -1590,12 +1725,18 @@
          (row._net.batch ? '  [' + row._net.batch.index + '/' + row._net.batch.of + ']' : ''))
       : ((on['interaction_id'] && row.data.interaction_id) ||
          (on['page_category'] && row.data.page_category) || row._type);
-    console.groupCollapsed(
-      '%c' + pill.tag + '%c  ' + label + '  %c' + row._path,
-      pillCss(colour, pill.ring),
-      'font-weight:bold',
-      'color:#999;font-weight:normal'
-    );
+    // The headline is assembled rather than templated because the fired-by chip
+    // is optional, and console.log's %c substitutions are positional: a format
+    // string with a placeholder and no argument prints the literal '%c'.
+    var fmt = '%c' + pill.tag + '%c', args = [pillCss(colour, pill.ring), ''];
+    var chip = row._kind === 'net' ? firedByChip(row._net) : null;
+    if (chip) {
+      fmt += '  %c' + chip.text + '%c';
+      args.push(chipCss(chip.colour, chip.faint), '');
+    }
+    fmt += '  %c' + label + '  %c' + row._path;
+    args.push('font-weight:bold', 'color:#999;font-weight:normal');
+    console.groupCollapsed.apply(console, [fmt].concat(args));
     if (row._kind === 'net' && row._net) {
       var nn = row._net, nl = [];
       var nline = function (k, v) {
@@ -1743,7 +1884,7 @@
       if (!held.length) return;
       console.log('%c' + held.length + ' more captured, not ticked%c\n  ' +
         held.slice(0, 14).join(', ') + (held.length > 14 ? ', …' : '') +
-        '\n  Tick them in Fields, or run __capResetFields() for the defaults.',
+        '\n  Search for them in Fields, or use its "restore defaults" link.',
         'color:#8d6e63;font-weight:bold', 'color:#777;font-family:monospace');
     })();
     if (row._empty_n) {
@@ -2465,6 +2606,9 @@
     if (fb.confirmed) row._net.fired_by_confirmed = true;
     if (fb.basis) row._net.fired_by_basis = fb.basis;
     if (fb.conflict) row._net.fired_by_conflict = fb.conflict;
+    // Only on a conflict: the inline chip names BOTH sides, and the stack's
+    // container alone would not say what it disagrees with.
+    if (fb.conflict && fb.declared) row._net.fired_by_declared = fb.declared;
     if (info.batch) row._net.batch = info.batch;
     if (info.wire_params && info.wire_params !== row._fields) row._net.wire_params = info.wire_params;
     if (info.expanded && info.expanded.length) row._net.expanded = info.expanded;
@@ -2808,6 +2952,8 @@
   // from the console helpers cannot throw.
   var renderLegend = function () {};
   var renderLabelToggle = function () {};
+  // Keeps the ticked count on the Fields button in step with the picker below it.
+  var renderFieldsButton = function () {};
   // Badge reads "utag · beacons", and drops the half you have paused.
   function refreshBadge() {
     if (!badgeEl) return;
@@ -2846,91 +2992,233 @@
     if (!g.scope || !g.scope.endpoint || !g.scope.endpoint.length) return false;
     return g.scope.endpoint.every(function (ep) { return !pillOn(ep); });
   }
-  function renderFields() {
+  // ── The Fields picker ──────────────────────────────────────────────────────
+  // Two halves, deliberately: a shell built ONCE, and a list rebuilt on every
+  // keystroke. The old picker rebuilt everything, which is why it could never
+  // have a search box — the input would be destroyed mid-word, taking the caret
+  // and the focus with it. Splitting them is what makes filtering possible, and
+  // filtering is what a list of 300-odd checkboxes actually needs.
+  var fieldsUI = null;
+  var fieldQuery = '';
+  // Ticked / total across every group the vendor chips have not muted. Muted
+  // groups are excluded because they are not on screen either — a total that
+  // counted invisible fields would never match what the user can see.
+  function fieldStats() {
+    var s = enabledSet(), out = { on: 0, total: 0 };
+    groups().forEach(function (g) {
+      if (groupMuted(g)) return;
+      g.keys.forEach(function (k) { out.total++; if (s[qid(g, k)]) out.on++; });
+    });
+    return out;
+  }
+  // The search box doubles as the custom-key entry, so there is one input where
+  // there used to be a filter-shaped hole at the top and an Add box at the
+  // bottom of a very long scroll. Typing a key that already exists finds it;
+  // typing one that does not offers to add it. Same gesture either way.
+  function addTypedKey() {
+    var k = fieldQuery.trim();
+    if (!k) return;
+    // If the typed key already exists in a catalogue group, tick it there —
+    // under that group's qualified id, so a scoped key ends up in the right one.
+    var host = null;
+    CATALOGUE.forEach(function (g) { if (!host && g.keys.indexOf(k) >= 0) host = g; });
+    if (host) {
+      setEnabled(qid(host, k), true);
+      toast('Ticked ' + k);
+    } else {
+      var c = customKeys();
+      if (c.indexOf(k) < 0) { c.push(k); lsSet(CUSTOM_KEY, c); }
+      setEnabled(k, true);
+      toast('Added ' + k);
+    }
+    fieldQuery = '';
+    if (fieldsUI) fieldsUI.q.value = '';
+    renderFieldList();
+  }
+  function buildFieldsUI() {
     fieldsEl.textContent = '';
-    var on = enabledSet();
-    var hidden = [];
+    var bar = el('div');
+    bar.className = 'cap-fbar';
+    var q = document.createElement('input');
+    q.type = 'search';
+    q.className = 'cap-fq';
+    q.placeholder = 'Search fields, or add a UDO key…';
+    q.value = fieldQuery;
+    // 'search' fires when the browser's own × clears the box; 'input' alone
+    // would leave the list filtered by a query no longer on screen.
+    ['input', 'search'].forEach(function (ev) {
+      q.addEventListener(ev, function () { fieldQuery = q.value; renderFieldList(); });
+    });
+    q.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); addTypedKey(); }
+    });
+    bar.appendChild(q);
+    var sum = el('div');
+    sum.className = 'cap-fsum';
+    var count = el('span', 'min-width:0');
+    // Right-hand slot: restore-defaults normally, and the add affordance while a
+    // search is running, because a half-typed key is never the moment to offer a
+    // button that unticks everything you just searched for.
+    var act = el('span', null);
+    act.className = 'cap-link';
+    sum.appendChild(count);
+    sum.appendChild(act);
+    bar.appendChild(sum);
+    var list = el('div');
+    var foot = el('div');
+    fieldsEl.appendChild(bar);
+    fieldsEl.appendChild(list);
+    fieldsEl.appendChild(foot);
+    fieldsUI = { q: q, count: count, act: act, list: list, foot: foot };
+  }
+  function renderFieldList() {
+    var ui = fieldsUI, on = enabledSet();
+    var raw = fieldQuery.trim(), q = raw.toLowerCase();
+    ui.list.textContent = '';
+    ui.foot.textContent = '';
+    var hidden = [], matched = 0, exact = false;
     groups().filter(function (g) {
       if (!groupMuted(g)) return true;
       hidden.push(g.name.replace(/ \(on the wire\)$/, ''));
       return false;
     }).forEach(function (g) {
-      var head = el('div', 'display:flex;align-items:center;justify-content:space-between;' +
-        'margin:8px 0 3px;font-weight:700;color:#8ecdf5;font-size:11px;text-transform:uppercase;letter-spacing:.4px');
-      head.appendChild(el('span', null, g.name));
-      var toggle = el('span', 'cursor:pointer;color:#888;font-weight:600;text-transform:none;letter-spacing:0', 'all / none');
-      toggle.addEventListener('click', function () {
-        var allOn = g.keys.every(function (k) { return enabledSet()[qid(g, k)]; });
-        g.keys.forEach(function (k) { setEnabled(qid(g, k), !allOn); });
-        renderFields();
+      var keys = g.keys.filter(function (k) {
+        if (k === raw) exact = true;
+        if (!q) return true;
+        return k.toLowerCase().indexOf(q) >= 0 ||
+               String(labelFor(g, k) || '').toLowerCase().indexOf(q) >= 0;
       });
-      head.appendChild(toggle);
-      fieldsEl.appendChild(head);
-      if (g.scope) {
-        fieldsEl.appendChild(el('div', 'font-size:10px;color:#777;margin:0 0 3px',
-          'Only recognised on ' + g.scope.endpoint.join(', ') + ' rows.'));
+      if (!keys.length) return;
+      matched += keys.length;
+      // A search is a request to SEE what matched, so it overrides the fold.
+      var folded = !q && groupFolded(g);
+      var head = el('div');
+      head.className = 'cap-fh';
+      var chev = el('span', null, folded ? '▶' : '▼');
+      chev.className = 'cap-fh-chev';
+      var name = el('span', null, g.name);
+      name.className = 'cap-fh-name';
+      var cnt = el('span');
+      cnt.className = 'cap-count';
+      head.appendChild(chev);
+      head.appendChild(name);
+      head.appendChild(cnt);
+      // Painted from the snapshot taken at the top of the render — enabledSet()
+      // parses localStorage on every call, and asking it once per group turned a
+      // keystroke into fifty parses. Only a live toggle needs to re-read.
+      function setCount(s) {
+        var n = keys.filter(function (k) { return !!s[qid(g, k)]; }).length;
+        cnt.textContent = n + '/' + keys.length;
+        cnt.className = 'cap-count' + (n ? ' on' : '');
       }
-      g.keys.forEach(function (k) {
-        var row = el('label', 'display:flex;align-items:baseline;gap:6px;padding:2px 0;cursor:pointer;font-size:11px;color:#ddd');
+      function syncCount() { setCount(enabledSet()); syncSummary(); }
+      // Two buttons, not one label that means both. 'all / none' was a single
+      // toggle: clicking the word 'all' when everything was already ticked
+      // unticked the group, which is the opposite of what it says.
+      var bulk = el('div');
+      bulk.className = 'cap-bulk';
+      [['all', true], ['none', false]].forEach(function (b) {
+        var btn = el('button', null, b[0]);
+        btn.title = (b[1] ? 'Show ' : 'Hide ') +
+          (q ? 'the ' + keys.length + ' matching' : 'all ' + keys.length) + ' fields in ' + g.name;
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();   // the header itself folds; this button must not
+          setEnabledMany(keys.map(function (k) { return qid(g, k); }), b[1]);
+          renderFieldList();
+        });
+        bulk.appendChild(btn);
+      });
+      head.appendChild(bulk);
+      head.addEventListener('click', function () {
+        if (q) return;   // nothing to remember: the fold is off while filtering
+        setGroupFolded(g, !folded);
+        renderFieldList();
+      });
+      if (q) head.style.cursor = 'default';
+      ui.list.appendChild(head);
+      setCount(on);
+      if (folded) return;
+      if (g.scope) {
+        var scope = el('div', null, 'Only recognised on ' + g.scope.endpoint.join(', ') + ' rows.');
+        scope.className = 'cap-scope';
+        ui.list.appendChild(scope);
+      }
+      keys.forEach(function (k) {
+        var id = qid(g, k), isOn = !!on[id];
+        var row = el('label');
+        row.className = 'cap-f' + (isOn ? ' on' : '');
         var cb = document.createElement('input');
         cb.type = 'checkbox';
-        cb.checked = !!on[qid(g, k)];
-        cb.style.cssText = 'margin:0;cursor:pointer;flex:none';
-        cb.addEventListener('change', function () { setEnabled(qid(g, k), cb.checked); });
+        cb.checked = isOn;
+        cb.addEventListener('change', function () {
+          setEnabled(id, cb.checked);
+          // Repainting one row instead of the list keeps the scroll position,
+          // which matters when the box you just ticked is 200 rows down.
+          row.className = 'cap-f' + (cb.checked ? ' on' : '');
+          syncCount();
+        });
         row.appendChild(cb);
-        // Label first where there is one, with the raw key kept alongside in dim
-        // monospace — you still need the literal name to search Tealium.
+        // Label first where there is one, with the raw key alongside in dim
+        // monospace — you still need the literal name to search Tealium. Both on
+        // ONE line, wrapping only when they do not fit: stacked, a catalogued
+        // group was twice as tall as it needed to be.
+        var txt = el('span');
+        txt.className = 'cap-ftxt';
         var lab = labelFor(g, k);
-        if (lab) {
-          var box = el('span', 'display:flex;flex-direction:column;gap:1px;min-width:0');
-          box.appendChild(el('span', null, lab));
-          box.appendChild(el('span', 'font-family:ui-monospace,Menlo,monospace;color:#8a8a8a;font-size:10px', k));
-          row.appendChild(box);
-        } else {
-          row.appendChild(el('span', 'font-family:ui-monospace,Menlo,monospace', k));
-        }
-        fieldsEl.appendChild(row);
+        if (lab) txt.appendChild(el('span', null, lab));
+        var raws = el('span', lab ? null : 'font-size:11px', k);
+        raws.className = 'cap-k';
+        txt.appendChild(raws);
+        row.appendChild(txt);
+        ui.list.appendChild(row);
       });
     });
-    // Custom key entry
-    var add = el('div', 'display:flex;gap:4px;margin:10px 0 2px');
-    var input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'add any UDO key…';
-    input.style.cssText = 'flex:1;min-width:0;background:#2a2a2a;border:1px solid #444;color:#eee;' +
-      'border-radius:5px;padding:5px 6px;font:11px ui-monospace,Menlo,monospace';
-    var btn = el('button', 'background:#2f6f3f;border:0;color:#fff;border-radius:5px;padding:5px 9px;' +
-      'font:700 11px inherit;cursor:pointer', 'Add');
-    function addKey() {
-      var k = input.value.trim();
-      if (!k) return;
-      var c = customKeys();
-      // If the typed key already exists in a catalogue group, tick it there —
-      // under that group's qualified id, so a scoped key ends up in the right one.
-      var host = null;
-      CATALOGUE.forEach(function (g) { if (!host && g.keys.indexOf(k) >= 0) host = g; });
-      if (host) {
-        setEnabled(qid(host, k), true);
-      } else if (c.indexOf(k) < 0) {
-        c.push(k); lsSet(CUSTOM_KEY, c); setEnabled(k, true);
-      }
-      input.value = '';
-      renderFields();
-      toast('Added ' + k);
+    if (!matched) {
+      var empty = el('div', null, q
+        ? 'No field matches “' + raw + '”.'
+        : 'Nothing to show — every group is muted in the chips above.');
+      empty.className = 'cap-empty';
+      ui.list.appendChild(empty);
     }
-    btn.addEventListener('click', addKey);
-    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addKey(); } });
-    add.appendChild(input); add.appendChild(btn);
-    fieldsEl.appendChild(add);
-    fieldsEl.appendChild(el('div', 'font-size:10px;color:#777;margin-top:4px',
-      'All catalogued keys are always captured — these boxes filter the console and the exports, including past captures.'));
+    var note = el('div', null,
+      'All catalogued keys are always captured — these boxes filter the console ' +
+      'and the exports, including past captures.');
+    note.className = 'cap-note';
+    ui.foot.appendChild(note);
     // Never let a group vanish silently: a picker that quietly drops Meta reads
     // as a bug, not as a consequence of muting META two panels up.
     if (hidden.length) {
-      fieldsEl.appendChild(el('div', 'font-size:10px;color:#8d6e63;margin-top:3px',
+      ui.foot.appendChild(el('div', 'font-size:10px;color:#8d6e63;margin-top:3px',
         hidden.length + ' group' + (hidden.length === 1 ? '' : 's') + ' hidden — ' +
         hidden.join(', ') + ' muted in the chips above.'));
     }
+    syncSummary();
+    function syncSummary() {
+      var s = fieldStats();
+      renderFieldsButton();
+      ui.count.textContent = q
+        ? matched + ' match' + (matched === 1 ? '' : 'es') + ' · ' + s.on + ' of ' + s.total + ' ticked'
+        : s.on + ' of ' + s.total + ' fields ticked';
+      // Offer the add only for something that is not already a known key —
+      // otherwise the search has already found it and Enter would be a no-op.
+      if (raw && !exact) {
+        ui.act.textContent = '+ add “' + raw + '”';
+        ui.act.title = 'Capture and show this UDO key, catalogued or not.';
+        ui.act.onclick = addTypedKey;
+      } else {
+        ui.act.textContent = 'restore defaults';
+        ui.act.title = 'Tick the fields this tool ships with and untick everything else.';
+        ui.act.onclick = function () {
+          lsSet(FIELDS_KEY, DEFAULT_ON.slice());
+          renderFieldList();
+          toast('Fields restored to defaults');
+        };
+      }
+    }
+  }
+  function renderFields() {
+    if (!fieldsUI) buildFieldsUI();
+    renderFieldList();
   }
   // Newest first, because the thing you just triggered is the thing you are
   // looking for. Tealium-fired endpoints sort above the rest within that.
@@ -3007,6 +3295,9 @@
     } catch (e) {
       try { if (hostEl && hostEl.parentNode) hostEl.parentNode.removeChild(hostEl); } catch (e2) {}
       hostEl = badgeEl = panelEl = toastEl = fieldsEl = discEl = legendEl = null;
+      // Its refs point into the torn-down tree; leaving it set would make the
+      // rebuilt picker render into detached nodes and silently show nothing.
+      fieldsUI = null;
       console.log('%c[CAP] panel failed to build — retrying shortly%c  ' + (e && e.message),
         'background:#e53935;color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold', 'color:#999');
     }
@@ -3029,6 +3320,54 @@
     ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'touchstart', 'keydown']
       .forEach(function (ev) { hostEl.addEventListener(ev, function (e) { e.stopPropagation(); }); });
     var root = hostEl.attachShadow ? hostEl.attachShadow({ mode: 'open' }) : hostEl;
+    // Everything else in this panel is styled inline, which is fine for one-off
+    // nodes. The Fields picker is not one-off: it is hundreds of rows rebuilt on
+    // every keystroke, and it wants :hover and position:sticky, neither of which
+    // an inline style can express. A stylesheet in the shadow root cannot leak
+    // into the page and the page cannot reach it, so the isolation inline styles
+    // were bought for is not given up.
+    var css = document.createElement('style');
+    css.textContent = [
+      // top:-10px, not 0: the panel has 10px of padding, and sticking to the
+      // padding edge left a 10px band above the bar where the rows scrolling
+      // underneath stayed visible as a sliver of cut-off text.
+      '.cap-fbar{position:sticky;top:-10px;background:#1e1e1e;padding:10px 0 6px;z-index:2;',
+      '  box-shadow:0 6px 6px -6px rgba(0,0,0,.6)}',
+      '.cap-fq{width:100%;box-sizing:border-box;background:#252525;border:1px solid #3a3a3a;',
+      '  color:#eee;border-radius:6px;padding:6px 8px;font:11px ui-monospace,Menlo,monospace}',
+      '.cap-fq:focus{outline:0;border-color:#4f8fbf;background:#2a2a2a}',
+      '.cap-fq::placeholder{color:#6e6e6e;font-family:-apple-system,Segoe UI,Roboto,sans-serif}',
+      '.cap-fsum{display:flex;align-items:baseline;justify-content:space-between;gap:6px;',
+      '  margin:5px 1px 0;font-size:10px;color:#7d7d7d}',
+      '.cap-link{color:#8ecdf5;cursor:pointer;font-weight:600;flex:none}',
+      '.cap-link:hover{text-decoration:underline}',
+      '.cap-fh{display:flex;align-items:center;gap:6px;margin:9px 0 1px;cursor:pointer;user-select:none}',
+      '.cap-fh:hover .cap-fh-name{color:#b6e0fb}',
+      '.cap-fh-chev{color:#666;font-size:9px;flex:none;width:7px}',
+      '.cap-fh-name{flex:1;min-width:0;font:700 11px inherit;color:#8ecdf5;text-transform:uppercase;',
+      '  letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      '.cap-count{flex:none;font:600 10px ui-monospace,Menlo,monospace;color:#8f8f8f;',
+      '  background:#2b2b2b;border-radius:999px;padding:1px 6px}',
+      '.cap-count.on{color:#0f2231;background:#8ecdf5}',
+      '.cap-bulk{flex:none;display:flex;gap:1px}',
+      '.cap-bulk button{background:#2b2b2b;border:0;color:#9a9a9a;font:600 10px inherit;',
+      '  padding:2px 6px;cursor:pointer}',
+      '.cap-bulk button:first-child{border-radius:4px 0 0 4px}',
+      '.cap-bulk button:last-child{border-radius:0 4px 4px 0}',
+      '.cap-bulk button:hover{background:#3b3b3b;color:#f0f0f0}',
+      '.cap-scope{font-size:10px;color:#6f6f6f;margin:0 0 2px 13px}',
+      '.cap-f{display:flex;align-items:center;gap:7px;padding:3px 5px;margin:0 -5px;',
+      '  border-radius:5px;cursor:pointer;font-size:11px;color:#b9b9b9}',
+      '.cap-f:hover{background:#282828}',
+      '.cap-f.on{color:#f0f0f0}',
+      '.cap-f input{flex:none;margin:0;width:13px;height:13px;cursor:pointer;accent-color:#4f8fbf}',
+      '.cap-ftxt{display:flex;flex-wrap:wrap;align-items:baseline;gap:5px;min-width:0}',
+      '.cap-k{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:#7c7c7c;word-break:break-all}',
+      '.cap-f.on .cap-k{color:#9d9d9d}',
+      '.cap-note{font-size:10px;color:#777;margin-top:5px}',
+      '.cap-empty{font-size:11px;color:#8a8a8a;padding:10px 2px;text-align:center}'
+    ].join('\n');
+    root.appendChild(css);
     var wrap = el('div', 'font:12px/1.4 -apple-system,Segoe UI,Roboto,sans-serif');
     var pill = el('div', 'display:flex;align-items:center;gap:8px;background:#1e1e1e;color:#eee;' +
       'font-weight:700;font-size:12px;padding:8px 10px;border-radius:999px;' +
@@ -3072,12 +3411,21 @@
       var head = el('div', 'display:flex;align-items:baseline;justify-content:space-between;margin:0 0 3px');
       head.appendChild(el('span', 'font-weight:700;color:#8ecdf5;font-size:10px;' +
         'text-transform:uppercase;letter-spacing:.4px', title));
-      var bulk = el('span', 'cursor:pointer;color:#888;font-size:10px;font-weight:600', 'all · none');
-      bulk.addEventListener('click', function () {
-        var anyOn = pills.some(function (p) { return pillOn(p.key); });
-        pills.forEach(function (p) { setPillMuted(p.key, anyOn); });
-        renderLegend(); refreshBadge(); refreshFields();
-        toast(anyOn ? 'Muted ' + title.toLowerCase() : 'Capturing ' + title.toLowerCase());
+      // Two buttons rather than one 'all · none' that toggled on whatever the
+      // chips happened to be: clicking the word 'all' could mute the row, which
+      // is the opposite of what it says. Same pair, same styling, as the Fields
+      // groups below — one gesture to learn for both.
+      var bulk = el('div');
+      bulk.className = 'cap-bulk';
+      [['all', false], ['none', true]].forEach(function (b) {
+        var btn = el('button', null, b[0]);
+        btn.title = (b[1] ? 'Mute every ' : 'Capture every ') + title.toLowerCase() + ' row type';
+        btn.addEventListener('click', function () {
+          pills.forEach(function (p) { setPillMuted(p.key, b[1]); });
+          renderLegend(); refreshBadge(); refreshFields();
+          toast((b[1] ? 'Muted ' : 'Capturing ') + title.toLowerCase());
+        });
+        bulk.appendChild(btn);
       });
       head.appendChild(bulk);
       wrapEl.appendChild(head);
@@ -3162,8 +3510,14 @@
     }
     var bFields = mkBtn('⚙  Fields…');
     var bDisc   = mkBtn('🛰  Discovered…');
-    panelEl.appendChild(bFields);
-    panelEl.appendChild(bDisc);
+    // The button carries the count for the same reason Discovered does: how many
+    // fields are ticked decides what the console shows, and having to open the
+    // picker to find out is how you end up debugging a filter you forgot you set.
+    function fieldsLabel() {
+      var open = fieldsEl.style.display !== 'none';
+      return '⚙  Fields (' + fieldStats().on + ')' + (open ? ' ▾' : '…');
+    }
+    renderFieldsButton = function () { bFields.textContent = fieldsLabel(); };
     var actions = el('div', 'display:flex;gap:4px;margin:4px 0 0');
     var bCopy  = smBtn('Copy');
     var bJSON  = smBtn('JSON');
@@ -3174,29 +3528,66 @@
     bCSV.title   = 'Download the visible captures as CSV';
     bClear.title = 'Delete every stored capture';
     [bCopy, bJSON, bCSV, bClear].forEach(function (b) { actions.appendChild(b); });
-    panelEl.appendChild(actions);
     toastEl = el('div', 'margin-top:6px;font-size:11px;opacity:0;transition:opacity .2s;min-height:14px');
-    panelEl.appendChild(toastEl);
-    fieldsEl = el('div', 'display:none;border-top:1px solid #333;margin-top:8px;padding-top:4px');
-    panelEl.appendChild(fieldsEl);
+    // No top padding: the sticky search bar supplies its own, and a gap here
+    // would be a strip the bar cannot cover when the list scrolls under it.
+    fieldsEl = el('div', 'display:none;border-top:1px solid #333;margin-top:8px');
     discEl = el('div', 'display:none;border-top:1px solid #333;margin-top:8px;padding-top:4px');
+    // ── ORDER ───────────────────────────────────────────────────────────────
+    // Each disclosure sits DIRECTLY above the thing it opens. They used to be
+    // two buttons stacked at the top with both bodies far below, past the export
+    // row, so opening Fields expanded a region nowhere near the button that did
+    // it — and with Discovered open too, whichever you clicked, the other one's
+    // content is what appeared under your cursor.
+    //
+    // Fields goes last because it is the tall one: a picker that pushes four
+    // hundred rows into the middle of the panel buries every control under it,
+    // whereas at the bottom it simply extends downwards and the panel scrolls.
+    panelEl.appendChild(bDisc);
     panelEl.appendChild(discEl);
+    panelEl.appendChild(actions);
+    panelEl.appendChild(toastEl);
+    panelEl.appendChild(bFields);
+    panelEl.appendChild(fieldsEl);
     function discLabel() {
       var n = Object.keys(discAll()).length;
       return '🛰  Discovered' + (n ? ' (' + n + ')' : '') + (discEl.style.display === 'none' ? '…' : ' ▾');
     }
+    // ONE open at a time. Both are tall, and two open at once is a panel you can
+    // only navigate by scrolling past whichever you were not looking at.
+    function setDisclosures(which) {
+      fieldsEl.style.display = which === 'fields' ? 'block' : 'none';
+      discEl.style.display   = which === 'disc'   ? 'block' : 'none';
+      bFields.textContent = fieldsLabel();
+      bDisc.textContent = discLabel();
+    }
+    // Scrolls the button to the top of the panel so its body is the thing in
+    // view. Measured from rects rather than offsetTop: offsetParent is the host,
+    // which sits outside the shadow root, so offsetTop is not answerable here.
+    function reveal(btn) {
+      try {
+        panelEl.scrollTop += btn.getBoundingClientRect().top -
+                             panelEl.getBoundingClientRect().top - 4;
+      } catch (e) {}
+    }
+    bFields.textContent = fieldsLabel();
     bFields.addEventListener('click', function () {
       var open = fieldsEl.style.display === 'none';
-      fieldsEl.style.display = open ? 'block' : 'none';
-      bFields.textContent = open ? '⚙  Fields ▾' : '⚙  Fields…';
-      if (open) renderFields();
+      setDisclosures(open ? 'fields' : null);
+      if (open) {
+        renderFields();
+        reveal(bFields);
+        // Straight into the search box: the picker exists to answer "where is
+        // <key>", and typing is a faster answer than scrolling for it.
+        try { fieldsUI.q.focus(); } catch (e) {}
+      }
     });
     bDisc.textContent = discLabel();
     bDisc.addEventListener('click', function () {
       var open = discEl.style.display === 'none';
-      discEl.style.display = open ? 'block' : 'none';
       if (open) renderDiscovered();
-      bDisc.textContent = discLabel();
+      setDisclosures(open ? 'disc' : null);
+      if (open) reveal(bDisc);
     });
     bCopy.addEventListener('click', function () {
       var n = load().length;
@@ -3221,8 +3612,7 @@
     // e.target from outside reports the host, never the inner element.
     function closePanel() {
       panelEl.style.display = 'none';
-      fieldsEl.style.display = 'none';
-      bFields.textContent = '⚙  Fields…';
+      setDisclosures(null);
     }
     function isOutside(e) {
       var path = (e.composedPath && e.composedPath()) || [];
