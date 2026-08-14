@@ -58,7 +58,11 @@
     { name: 'Listing (ODP)', keys: [
       'odp.listing_id_short', 'odp.listing_id', 'odp.property', 'odp.title', 'odp.city',
       'odp.offer', 'odp.price_pcm', 'odp.price_pw', 'odp.rooms', 'odp.bedrooms',
-      'odp.interior', 'odp.offered_since', 'odp.page_type'
+      'odp.interior', 'odp.offered_since', 'odp.page_type',
+      // The property-detail block, from a live listing beacon. Unlabelled for the
+      // same reason as the tenant profile: the names are the description.
+      'odp.floor_space', 'odp.construction_type', 'odp.construction_year',
+      'odp.upkeep', 'odp.energy_rating'
     ]},
     { name: 'Search (SERP)', keys: [
       'serp.result.search_query', 'serp.result.property_results',
@@ -68,7 +72,21 @@
       'logged_in', 'customer_id_sha256', 'customer_id', 'user_id', 'customer_type',
       'property_alerts_count', 'favourites_count', 'pets',
       'first_name_filled_in', 'last_name_filled_in',
-      'telephone_number_filled_in', 'motivation_letter_filled_in'
+      'telephone_number_filled_in', 'motivation_letter_filled_in',
+      // The tenant-profile block, from a live pararius.com beacon. 'pets' was
+      // already here and these are its siblings — the same rental-application
+      // answers, sent on the same hits.
+      //
+      // Deliberately unlabelled: every one of them says what it is, and a label
+      // invented for someone else's UDO would be a guess presented as fact.
+      //
+      // Worth knowing that they are here at all: income, age and employment
+      // status are personal data, and this tool writes every captured attribute
+      // to localStorage and into the CSV/JSON exports. Untick them if a capture
+      // is going anywhere other than your own machine.
+      'monthly_income', 'employment_status', 'guarantor', 'age',
+      'current_housing_situation', 'preferred_living_situation',
+      'number_of_tenants', 'preferred_rent_start_date', 'preferred_contract_period'
     ]},
     // 'labels' is optional and only worth filling in where the raw name does not
     // explain itself. The raw key is always shown alongside the label, because it
@@ -200,6 +218,16 @@
       'cp.utag_main_dc_region': 'AudienceStream region storing this visit',
       'cp.utag_main_dc_group':  'Random number for the Collect sample size'
     }},
+    // The site's OWN cookies — neither utag's nor a vendor's, so they belong in
+    // neither group above. Mapped as Cookie data sources in the profile, which is
+    // the only reason they reach a beacon at all, and worth seeing for exactly
+    // that reason: a first-party cookie leaving the browser is a decision
+    // somebody made in Tealium, not something the site does by itself.
+    { name: 'Site cookies', keys: [
+      'cp.trace_id', 'cp.latest_search_locations'
+    ], labels: {
+      'cp.latest_search_locations': 'Recent search locations, as stored by the site'
+    }},
     { name: 'Browser / viewport', keys: [
       'browser.height', 'browser.width', 'browser.screen_height', 'browser.screen_width',
       'browser.timezone_offset', 'browser.*'
@@ -237,14 +265,34 @@
     { name: 'Meta tags', keys: [
       'meta.og:title', 'meta.og:url', 'meta.og:image', 'meta.description',
       'meta.og:description', 'meta.og:site_name', 'meta.og:type',
-      'meta.og:image:width', 'meta.og:image:height',
-      'meta.twitter:card', 'meta.viewport', 'meta.robots'
-    ]},
+      'meta.og:image:width', 'meta.og:image:height', 'meta.og:image:type',
+      'meta.twitter:card', 'meta.viewport', 'meta.robots',
+      'meta.facebook-domain-verification'
+    ], labels: {
+      'meta.facebook-domain-verification': 'Meta domain-verification token'
+    }},
+    // Everything above this group is the site telling you about itself. These are
+    // the identifiers an AD STACK has left in the browser, and a live pararius
+    // capture surfaced them as uncatalogued — worth naming, because a cross-site
+    // advertising id sitting in localStorage on a rental site is a finding, not
+    // plumbing. One wildcard for the SharedID family: the base key and its three
+    // timestamp siblings are one id, not four checkboxes.
     { name: 'localStorage', keys: [
       'ls.tealium_timing', 'ls.lastExternalReferrer', 'ls.lastExternalReferrerTime',
       'ls.dfValue', 'ls._gcl_ls', 'ls._uetsid', 'ls._uetsid_exp',
-      'ls._uetvid', 'ls._uetvid_exp', 'ls.__paypal_gw_*'
-    ]},
+      'ls._uetvid', 'ls._uetvid_exp', 'ls.__paypal_gw_*',
+      'ls.rlv_userid_sharedId*', 'ls.panoramaId', 'ls.panoramaId_expiry'
+    ], labels: {
+      // 'sharedId' is Prebid's SharedID user-id module; the rlv_ prefix is the
+      // wrapper that stores it. Named for what it IS rather than for whichever
+      // vendor put it there, which is the part I cannot confirm from a capture.
+      'ls.rlv_userid_sharedId*': 'Prebid SharedID advertising id (+ its stamps)',
+      'ls.panoramaId':           'Lotame Panorama ID — cross-site advertising id',
+      // Catalogued as the pair even though only the expiry has been seen: they
+      // are written together, so the other one arriving later should not read as
+      // something new and unknown.
+      'ls.panoramaId_expiry':    'When the Panorama ID expires'
+    }},
     { name: 'sessionStorage', keys: [
       'ss.tealium_fired_events', 'ss.dfValue', 'ss.checkout-conversion:*'
     ]},
@@ -257,9 +305,12 @@
       'cp.__gcl_au',
       'cp._gcl_aw', 'cp._gcl_dc', 'cp._fbc', 'cp._clck', 'cp._clsk',
       'cp._awin_awc', 'cp.awc',
-      'cp.g_state', 'cp._ta', 'cp._tas', 'cp._tac',
+      'cp.g_state', 'cp._ta', 'cp._tas', 'cp._tac', 'cp.__eoi',
       'clarity.project_id', 'meta.facebook.pixel_id',
-      'fb_event_id_*'
+      'fb_event_id_*',
+      // The only 'qp.' key catalogued so far — a QUERY PARAMETER data source,
+      // not a cookie. It is Google's, which is why it sits in this group.
+      'qp._gl'
     ], labels: {
       'fb_event_id_*': 'Meta event id for pixel/CAPI dedupe (per tag)',
       'cp._ga':      'GA client id',
@@ -280,7 +331,12 @@
       // a real cookie by this name here; Google's own is the single-underscore
       // _gcl_au, so both exist and it is worth knowing which your tags read.
       'cp.__gcl_au': 'Google Ads click id — non-standard __ cookie',
-      'cp.g_state':  'Google One Tap state'
+      'cp.g_state':  'Google One Tap state',
+      // Google sets this one and does not document it. What can be said without
+      // guessing: it appears on EEA traffic alongside consent-mode hits and is
+      // read by Google's ad tags, so it belongs with the rest of them here.
+      'cp.__eoi':    'Google ad cookie — EEA traffic, undocumented',
+      'qp._gl':      'Google cross-domain linker — carries ids between domains'
     }},
     // ─────────────────────────────────────────────────────────────────────────
     // SCOPED GROUP. These are Reddit's own pixel parameters as they appear on the
@@ -680,6 +736,23 @@
     'odp.interior',
     'serp.result.search_query',
     'logged_in', 'customer_id_sha256',
+    // The tenant profile, plus the site cookies and the two Google identifiers
+    // beside them. Ticked because every one of these was VISIBLE before it was
+    // catalogued — they arrived in the Uncatalogued block on each beacon — and
+    // cataloguing an attribute should never be the thing that hides it.
+    'monthly_income', 'employment_status', 'guarantor', 'age',
+    'current_housing_situation', 'preferred_living_situation',
+    'number_of_tenants', 'preferred_rent_start_date', 'preferred_contract_period',
+    'cp.trace_id', 'cp.latest_search_locations', 'cp.__eoi', 'qp._gl',
+    'meta.facebook-domain-verification', 'meta.og:image:type',
+    // Same rule, second pass: the property-detail attributes and the ad-stack
+    // ids were both arriving as uncatalogued. Note this leaves them ticked while
+    // older siblings — odp.price_pcm, odp.rooms — are not. That is not a
+    // judgement about which matters more, only about which was on screen
+    // yesterday; the group's 'all' button settles it either way in one click.
+    'odp.floor_space', 'odp.construction_type', 'odp.construction_year',
+    'odp.upkeep', 'odp.energy_rating',
+    'ls.rlv_userid_sharedId*', 'ls.panoramaId', 'ls.panoramaId_expiry',
     'reddit.event_name', 'reddit.pixel_id', 'cp._rdt_uuid', 'cp._rdt_cid', 'cp._rdt_em',
     'consent_decision', 'tci.consent_type',
     'google_ads_data_redaction', 'google_url_passthrough',
@@ -1122,13 +1195,23 @@
   // it cannot fall behind it again; re-ticks anything a previous version left
   // catalogued but invisible.
   MIGRATIONS.push({ v: '6.3', keys: wireDefaults() });
-  // 7.5 promotes two endpoints the discovery survey turned up on live traffic:
+  // 7.5 promotes two endpoints the discovery survey turned up on live traffic —
   // PromptWatch's ingest, and GTM's /td ping alongside the /a one already
-  // matched. Neither was ever captured, so nothing an install can have an
-  // opinion about is being changed — listed key by key rather than re-deriving
+  // matched — and names the fourteen attributes a pararius.com beacon was still
+  // reporting as Uncatalogued. The endpoint keys were never captured at all; the
+  // fourteen were visible as uncatalogued and MUST be ticked here, or naming
+  // them is what makes them vanish. Listed key by key rather than re-deriving
   // wireDefaults(), which would also re-tick vendor parameters someone has since
   // deliberately turned off.
   MIGRATIONS.push({ v: '7.5', keys: [
+    'monthly_income', 'employment_status', 'guarantor', 'age',
+    'current_housing_situation', 'preferred_living_situation',
+    'number_of_tenants', 'preferred_rent_start_date', 'preferred_contract_period',
+    'cp.trace_id', 'cp.latest_search_locations', 'cp.__eoi', 'qp._gl',
+    'meta.facebook-domain-verification', 'meta.og:image:type',
+    'odp.floor_space', 'odp.construction_type', 'odp.construction_year',
+    'odp.upkeep', 'odp.energy_rating',
+    'ls.rlv_userid_sharedId*', 'ls.panoramaId', 'ls.panoramaId_expiry',
     'pw_wire:project_id', 'pw_wire:action', 'pw_wire:version',
     'pw_wire:payload.href', 'pw_wire:payload.referrer',
     'pw_wire:payload.locale', 'pw_wire:payload.timezone',
@@ -1300,7 +1383,23 @@
     });
     return makeMatcher(keys);
   }
-  function labelFor(g, k) { return (g.labels && g.labels[k]) || ''; }
+  // A wildcard catalogue entry has to label the keys it MATCHES, not just its own
+  // literal spelling. Rows carry concrete names — ep.currency, timing.ttfb,
+  // ls.rlv_userid_sharedId_exp — so an exact lookup found nothing and every
+  // wildcard label written since 'ep.*' has been showing up only in the picker,
+  // never on the row it was written for. Longest prefix wins, so a specific
+  // entry is never shadowed by a broader one in the same group.
+  function labelFor(g, k) {
+    if (!g.labels) return '';
+    if (g.labels[k]) return g.labels[k];
+    var best = '', bestLen = -1;
+    for (var e in g.labels) {
+      if (e.charAt(e.length - 1) !== '*') continue;
+      var p = e.slice(0, -1);
+      if (p.length > bestLen && k.indexOf(p) === 0) { best = g.labels[e]; bestLen = p.length; }
+    }
+    return best;
+  }
   // Human-readable where a label exists, but never at the cost of the literal
   // name: that is what you paste into Tealium or search the Network tab for.
   // Where the explanations live now that they are not on every row: a reference
