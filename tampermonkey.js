@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      7.3
+// @version      7.4
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -837,6 +837,8 @@
     // hit, which is the wrong signal.
     'gtm':     { tag: 'GTM',     colour: '#5f6368' }
   };
+  // What the on-screen pill calls itself.
+  var PILL_NAME = 'TAGS';
   var PILL_VENDOR_FALLBACK = '#ec407a';  // a vendor endpoint with no entry above
   var PILL_BEACON  = '#26c6da';          // Tealium collect
   var PILL_VISITOR = '#4527a0';          // Tealium visitor service
@@ -3031,10 +3033,16 @@
     var pill = el('div', 'display:flex;align-items:center;gap:8px;background:#1e1e1e;color:#eee;' +
       'font-weight:700;font-size:12px;padding:8px 10px;border-radius:999px;' +
       'box-shadow:0 3px 12px rgba(0,0,0,.35);cursor:grab;user-select:none');
+    // 'CAP' was short for capture — an internal abbreviation that had leaked into
+    // the one part of this script a non-author ever sees. TAGS says what the tool
+    // watches without needing to be explained, and it is still short enough to
+    // stay out of the way. One constant, so it is one edit to change again.
     pill.appendChild(el('span', 'width:8px;height:8px;border-radius:50%;background:#66bb6a'));
-    pill.appendChild(el('span', null, 'CAP'));
+    pill.appendChild(el('span', null, PILL_NAME));
     badgeEl = el('span', 'background:#333;border-radius:999px;padding:2px 7px', '0');
     pill.appendChild(badgeEl);
+    pill.title = 'Tag capture — utag events, Tealium beacons and vendor pixels.\n' +
+                 'Click to open, drag to move.';
     wrap.appendChild(pill);
     panelEl = el('div', 'display:none;margin-top:8px;background:#1e1e1e;color:#eee;border-radius:10px;' +
       'padding:10px;box-shadow:0 3px 16px rgba(0,0,0,.4);width:280px;max-height:70vh;overflow:auto');
