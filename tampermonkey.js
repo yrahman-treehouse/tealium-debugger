@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      7.6
+// @version      7.7
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -2384,7 +2384,7 @@
     // it would let a burst of images evict a beacon's entry inside the 3s window
     // and log that beacon twice — discovery must not corrupt the capture it sits
     // next to.
-    if (netDupe(abs)) return;
+    if (netDupe(abs, bodyToText(body))) return;
     var tmpl = pathTemplate(path);
     var key = host + '|' + tmpl;
     var m = discAll(), e = m[key], now = new Date();
@@ -2586,15 +2586,36 @@
     if (t.indexOf('=') > -1) return [parseQuery(t)];
     return [{ _body: t.slice(0, 400) }];
   }
-  // Every Tealium hit carries tealium_random and a timestamp, so two identical
-  // URLs inside a few seconds are always one request seen by two hooks — never
-  // two real requests.
+  // Every Tealium hit carries tealium_random and a timestamp — but only the image
+  // transport puts them in the URL. A beacon/fetch/xhr POST carries the whole
+  // payload in the BODY, so its URL is byte-identical every time:
+  //   …/i.gif?gdpr=1&gdpr_consent=<static TCF string>
+  // Keying on the URL alone therefore swallowed every Collect POST fired within
+  // NET_DEDUPE_MS of the previous one, and a swallowed row is indistinguishable
+  // from a beacon that never fired.
+  //
+  // So: when a hook hands us a body, the key is url + body, and two real requests
+  // are two rows. When it does not — every PerformanceObserver replay — fall back
+  // to matching the URL alone, which is what suppresses the observer's echo of a
+  // request a wrapper already recorded richly.
   var netSeen = [];
-  function netDupe(url) {
+  function netSig(text) {
+    var t = text == null ? '' : String(text);
+    if (!t) return '';
+    var h = 5381;
+    for (var i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+    return t.length + ':' + h.toString(36);
+  }
+  function netDupe(url, bodyText) {
     var now = new Date().getTime();
     netSeen = netSeen.filter(function (e) { return now - e[1] <= NET_DEDUPE_MS; });
-    for (var i = 0; i < netSeen.length; i++) if (netSeen[i][0] === url) return true;
-    netSeen.push([url, now]);
+    var sig = netSig(bodyText);
+    for (var i = 0; i < netSeen.length; i++) {
+      if (netSeen[i][0] !== url) continue;
+      if (!sig) return true;                    // bodyless sighting = observer echo
+      if (netSeen[i][2] === sig) return true;   // same URL AND same body = one request, two hooks
+    }
+    netSeen.push([url, now, sig]);
     if (netSeen.length > 200) netSeen = netSeen.slice(-200);
     return false;
   }
@@ -2730,10 +2751,10 @@
         return false;
       }
       if (!sourceOn('net')) return false;      // paused: nothing parsed, nothing stored
-      if (netDupe(abs)) return false;
+      var bodyText = bodyToText(body);
+      if (netDupe(abs, bodyText)) return false;
       var q = {}, host = '', path = abs;
       try { var U = new URL(abs); q = parseQuery(U.search); host = U.hostname; path = U.pathname; } catch (e) {}
-      var bodyText = bodyToText(body);
       var bodies = paramsFromBody(body);
       if (!bodies.length) bodies = [null];
       // One request can yield several rows: a batched body, an envelope holding a
