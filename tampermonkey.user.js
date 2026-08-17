@@ -13,7 +13,12 @@
 // @match        *://*.toitpourtoi.fr/*
 // @run-at       document-start
 // @grant        none
+// @homepageURL  https://github.com/yrahman-treehouse/tealium-debugger
+// @downloadURL  https://raw.githubusercontent.com/yrahman-treehouse/tealium-debugger/main/tampermonkey.user.js
+// @updateURL    https://raw.githubusercontent.com/yrahman-treehouse/tealium-debugger/main/tampermonkey.user.js
 // ==/UserScript==
+// Updates: install from the raw URL above (not the github.com blob page, which
+// serves HTML). Bump @version on every push or the update check finds nothing.
 // Domains are inferred from the Tealium profile names (huurwoningen-nl -> huurwoningen.nl etc.).
 // Add or correct @match lines as needed — staging/acceptance hosts are not covered.
 //
