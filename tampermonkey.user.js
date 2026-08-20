@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      8.1
+// @version      8.2
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -272,9 +272,23 @@
       'meta.og:description', 'meta.og:site_name', 'meta.og:type',
       'meta.og:image:width', 'meta.og:image:height', 'meta.og:image:type',
       'meta.twitter:card', 'meta.viewport', 'meta.robots',
-      'meta.facebook-domain-verification'
+      'meta.facebook-domain-verification',
+      // Two senses of "meta" collide in this group and it is worth being explicit
+      // about which is which. Everything above is an HTML <meta> tag the site
+      // publishes about itself. These two are CUSTOM data sources added to feed
+      // the Meta (Facebook) tags — same 'meta.' prefix, different Meta. They are
+      // catalogued here because that prefix is what the payload carries; the
+      // labels say who they are for.
+      'meta.pageview_name', 'meta.external_ids'
     ], labels: {
-      'meta.facebook-domain-verification': 'Meta domain-verification token'
+      'meta.facebook-domain-verification': 'Meta domain-verification token',
+      'meta.pageview_name': 'Custom UDO — page-view name sent to the Meta pixel',
+      // Meta's advanced-matching external_id, plural because the site can supply
+      // more than one id for the same person. Deliberately not described as
+      // "hashed": whether these arrive already hashed is a property of this
+      // profile's mapping, not of the attribute, so check the fb/tr row's ud[*
+      // parameters to see what actually left the browser.
+      'meta.external_ids':  'Custom UDO — external_id(s) for Meta advanced matching'
     }},
     // Everything above this group is the site telling you about itself. These are
     // the identifiers an AD STACK has left in the browser, and a live pararius
@@ -303,12 +317,15 @@
     ]},
     { name: 'Other vendors', keys: [
       'cp._ga', 'cp._ga_*', 'cp._fbp', 'cp._uetsid', 'cp._uetvid', 'cp._gcl_au',
-      // Google's cookie is named _gcl_au, so cp._gcl_au is the correct mapping.
-      // The double-underscore spelling also turns up in payloads — listed so it is
-      // captured rather than dropped, but it points at a mistyped Cookie data
-      // source in the profile and is worth fixing there.
-      'cp.__gcl_au',
-      'cp._gcl_aw', 'cp._gcl_dc', 'cp._fbc', 'cp._clck', 'cp._clsk',
+      // Google's cookies are named _gcl_au / _gcl_aw / _gcl_gs, so the
+      // single-underscore cp. spellings are the correct mappings. The
+      // double-underscore spellings ALSO turn up in payloads — three of them now,
+      // one per family member — and are listed so they are captured rather than
+      // dropped. They point at mistyped Cookie data sources in the profile and are
+      // worth fixing there; until they are, the pair tells you which of the two
+      // your tags actually read.
+      'cp.__gcl_au', 'cp.__gcl_aw', 'cp.__gcl_gs',
+      'cp._gcl_aw', 'cp._gcl_dc', 'cp._gcl_gs', 'cp._fbc', 'cp._clck', 'cp._clsk',
       'cp._awin_awc', 'cp.awc',
       'cp.g_state', 'cp._ta', 'cp._tas', 'cp._tac', 'cp.__eoi',
       'clarity.project_id', 'meta.facebook.pixel_id',
@@ -336,6 +353,17 @@
       // a real cookie by this name here; Google's own is the single-underscore
       // _gcl_au, so both exist and it is worth knowing which your tags read.
       'cp.__gcl_au': 'Google Ads click id — non-standard __ cookie',
+      // Google's Conversion Linker help says it "sets ad click information in
+      // cookies named _gcl_*, such as _gcl_aw and _gcl_gs" — that sentence is the
+      // whole of the primary source on _gcl_gs. What it contains beyond ad click
+      // information is not documented anywhere I would cite, so the label says
+      // only what Google says. In captures here it arrives alongside _gcl_aw on
+      // Google-sourced landings.
+      'cp._gcl_gs':   'Google Ads click info — Conversion Linker (_gcl_* family)',
+      // Same story as __gcl_au: the __ spelling is not Google's, so a value in one
+      // of these came from a data source in the profile, not from the Google tag.
+      'cp.__gcl_aw':  'Google Ads Search click id — non-standard __ cookie',
+      'cp.__gcl_gs':  'Google Ads click info — non-standard __ cookie',
       'cp.g_state':  'Google One Tap state',
       // Google sets this one and does not document it. What can be said without
       // guessing: it appears on EEA traffic alongside consent-mode hits and is
@@ -767,6 +795,11 @@
     // straight into invisibility on installs that map these cookies.
     'cp._fbc', 'cp._gcl_aw', 'cp._gcl_dc', 'cp._awin_awc', 'cp.awc',
     'cp._clck', 'cp._clsk',
+    // 8.2: the rest of the _gcl_* family and its __ twins, plus the two custom
+    // UDOs behind the Meta tags. All five were on screen as uncatalogued, so all
+    // five are ticked — the same rule as every pass above it.
+    'cp._gcl_gs', 'cp.__gcl_aw', 'cp.__gcl_gs',
+    'meta.pageview_name', 'meta.external_ids',
     // Everything below this point is derived, not listed — see wireDefaults().
     'event', 'reddit_pixel_event_id_*', 'fb_event_id_*',
     'tci.event_id'
@@ -1223,6 +1256,15 @@
     'gtm_wire:seq', 'gtm_wire:exp', 'gtm_wire:dl', 'gtm_wire:tdp',
     'gtm_wire:frm', 'gtm_wire:rtg', 'gtm_wire:slo', 'gtm_wire:hlo',
     'gtm_wire:lst', 'gtm_wire:bt', 'gtm_wire:ct', 'gtm_wire:jsp', 'gtm_wire:pcid'
+  ] });
+  // 8.2 names the five attributes a live capture was still reporting as
+  // Uncatalogued: the two remaining members of Google's _gcl_* cookie family and
+  // the __ misspelling of each, plus the two custom UDOs that feed the Meta tags.
+  // Every one of them was visible before it had a name, so every one is ticked —
+  // otherwise cataloguing them is the thing that hides them.
+  MIGRATIONS.push({ v: '8.2', keys: [
+    'cp._gcl_gs', 'cp.__gcl_aw', 'cp.__gcl_gs',
+    'meta.pageview_name', 'meta.external_ids'
   ] });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
