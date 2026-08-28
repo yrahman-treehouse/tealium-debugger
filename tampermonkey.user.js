@@ -2166,6 +2166,11 @@
   //   beacon  — navigator.sendBeacon(url, body)
   //   fetch   — POST to /event with a JSON body
   //   xhr     — older transports and the visitor-service lookups
+  //   form    — a hidden <form> POSTed at a target iframe. fbevents.js under
+  //             Meta's SmartSetup uses this instead of fetch/XHR/beacon/image,
+  //             and a cross-origin iframe navigation never surfaces in the
+  //             parent page's PerformanceObserver either, so this is the only
+  //             hook that sees it.
   //   perf    — a PerformanceObserver safety net that catches anything the
   //             wrappers missed: requests made before this script patched (the
   //             observer is created with buffered:true so it replays those), and
@@ -2957,6 +2962,48 @@
           get: sdsc.get, set: nss, configurable: true, enumerable: sdsc.enumerable
         });
       }
+    } catch (e) {}
+    // form submit — fbevents.js under Meta's SmartSetup posts through a hidden
+    // iframe-targeted form rather than fetch/XHR/beacon/image. Both submit()
+    // and requestSubmit() are wrapped, plus a capturing 'submit' listener for
+    // forms submitted by a real click; requestSubmit() triggers the listener
+    // too, so a per-form flag dedupes the double report.
+    try {
+      var formDedupe = typeof WeakSet === 'function' ? new WeakSet() : null;
+      var noteFormSubmit = function (form) {
+        try {
+          if (!form || form.tagName !== 'FORM') return;
+          if (formDedupe) {
+            if (formDedupe.has(form)) return;
+            formDedupe.add(form);
+            Promise.resolve().then(function () { formDedupe.delete(form); });
+          }
+          var url = form.getAttribute('action') || form.action || location.href;
+          var method = (form.getAttribute('method') || form.method || 'GET').toUpperCase();
+          var body = null;
+          try { body = new FormData(form); } catch (e) {}
+          noteRequest(url, method, body, 'form');
+        } catch (e) {}
+      };
+      var fsub = HTMLFormElement.prototype.submit;
+      if (fsub && !fsub.__cap) {
+        var wfsub = function () {
+          noteFormSubmit(this);
+          return fsub.apply(this, arguments);
+        };
+        wfsub.__cap = true;
+        HTMLFormElement.prototype.submit = wfsub;
+      }
+      var frsub = HTMLFormElement.prototype.requestSubmit;
+      if (frsub && !frsub.__cap) {
+        var wfrsub = function () {
+          noteFormSubmit(this);
+          return frsub.apply(this, arguments);
+        };
+        wfrsub.__cap = true;
+        HTMLFormElement.prototype.requestSubmit = wfrsub;
+      }
+      document.addEventListener('submit', function (e) { noteFormSubmit(e.target); }, true);
     } catch (e) {}
   }
   function installPerf() {
