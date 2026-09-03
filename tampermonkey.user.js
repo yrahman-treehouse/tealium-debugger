@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      8.3
-// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
+// @version      8.4
+// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
 // @match        *://*.huurwoningen.com/*
@@ -32,7 +32,8 @@
 //   net  — the requests utag then makes: Tealium's own collect layer (i.gif,
 //          /event, the visitor-service lookups) AND the third-party pixels its
 //          tags fire — Meta, GA4, Google Ads, Microsoft UET, Clarity, Awin,
-//          Reddit. This is what ACTUALLY left the browser, and to whom.
+//          Reddit, Addrevenue. This is what ACTUALLY left the browser, and to
+//          whom.
 //
 // They are not redundant. Mapped attributes, consent gating and tag-level
 // filtering all sit between the two, so an attribute can be present in the utag
@@ -300,7 +301,15 @@
       'ls.tealium_timing', 'ls.lastExternalReferrer', 'ls.lastExternalReferrerTime',
       'ls.dfValue', 'ls._gcl_ls', 'ls._uetsid', 'ls._uetsid_exp',
       'ls._uetvid', 'ls._uetvid_exp', 'ls.__paypal_gw_*',
-      'ls.rlv_userid_sharedId*', 'ls.panoramaId', 'ls.panoramaId_expiry'
+      'ls.rlv_userid_sharedId*', 'ls.panoramaId', 'ls.panoramaId_expiry',
+      // Same Criteo/RTB House pair as the cp. cookies below, also written to
+      // localStorage — worth keeping as its own line rather than assuming the
+      // cookie is the only copy. '_grecaptcha' is Google reCAPTCHA's own client
+      // token, unrelated to any ad vendor. 'webchat-local-data' is a chat
+      // widget's persisted state; which widget is not identifiable from the key
+      // alone, so the label says only what the key implies.
+      'ls.cto_bundle', 'ls.__rtbh.uid', 'ls.__rtbh.lid', 'ls._grecaptcha',
+      'ls.webchat-local-data'
     ], labels: {
       // 'sharedId' is Prebid's SharedID user-id module; the rlv_ prefix is the
       // wrapper that stores it. Named for what it IS rather than for whichever
@@ -310,11 +319,44 @@
       // Catalogued as the pair even though only the expiry has been seen: they
       // are written together, so the other one arriving later should not read as
       // something new and unknown.
-      'ls.panoramaId_expiry':    'When the Panorama ID expires'
+      'ls.panoramaId_expiry':    'When the Panorama ID expires',
+      // Criteo categorises this one itself, in its own OneTag documentation, as
+      // a marketing cookie that "provides functions across pages" with a
+      // 13-month lifetime — i.e. the id that lets Criteo recognise the same
+      // visitor on a later page or a later visit.
+      'ls.cto_bundle':           'Criteo — cross-page/cross-visit match id (marketing, ~13-month lifetime)',
+      // RTB House's own cookie-matching docs use "UID" for the id its endpoint
+      // exchanges with a publisher, which is this cookie. Third-party scanners
+      // (Cookiepedia) confirm __rtbh.lid is RTB House too, in the same
+      // targeting/advertising category, but neither RTB House nor those
+      // scanners document what distinguishes "lid" from "uid" — so the second
+      // label says only what is shared, not a guessed distinction.
+      'ls.__rtbh.uid':           'RTB House retargeting — user id (their own term, "UID")',
+      'ls.__rtbh.lid':           'RTB House retargeting cookie — pairs with __rtbh.uid; "lid" is not documented',
+      // Google's own reCAPTCHA FAQ describes this as existing "for the purpose
+      // of providing its risk analysis" — i.e. anti-fraud/anti-bot scoring, not
+      // advertising.
+      'ls._grecaptcha':          'Google reCAPTCHA — risk-analysis token (anti-bot, not ad-related)',
+      'ls.webchat-local-data':   'Chat widget — persisted state (vendor not identified)'
     }},
     { name: 'sessionStorage', keys: [
-      'ss.tealium_fired_events', 'ss.dfValue', 'ss.checkout-conversion:*'
-    ]},
+      'ss.tealium_fired_events', 'ss.dfValue', 'ss.checkout-conversion:*',
+      'ss.adroll_dqs', 'ss.adroll_flgs', 'ss.__rtbh.uid', 'ss.__rtbh.lid',
+      'ss.webchat-session-data'
+    ], labels: {
+      // Both names turn up only in other sites' cookie-policy disclosures and
+      // cookie-scanner directories (cookie.is, Cookiepedia) as "AdRoll,
+      // uncategorised, no description available" — AdRoll's own published
+      // cookie list (help.adroll.com) names _adroll/_adroll_shared/_adroll_fpc/
+      // __ar_v4 and does not mention either of these two. So: confirmed as
+      // AdRoll's, not confirmed as to what they do — same treatment as
+      // cp.__eoi above rather than a guessed purpose.
+      'ss.adroll_dqs':            'AdRoll — undocumented session flag',
+      'ss.adroll_flgs':           'AdRoll — undocumented session flags',
+      'ss.__rtbh.uid':            'RTB House retargeting — user id (session copy)',
+      'ss.__rtbh.lid':            'RTB House retargeting cookie — pairs with __rtbh.uid; session copy',
+      'ss.webchat-session-data':  'Chat widget — this session\'s state (vendor not identified)'
+    }},
     { name: 'Other vendors', keys: [
       'cp._ga', 'cp._ga_*', 'cp._fbp', 'cp._uetsid', 'cp._uetvid', 'cp._gcl_au',
       // Google's cookies are named _gcl_au / _gcl_aw / _gcl_gs, so the
@@ -330,11 +372,19 @@
       'cp.g_state', 'cp._ta', 'cp._tas', 'cp._tac', 'cp.__eoi',
       'clarity.project_id', 'meta.facebook.pixel_id',
       'fb_event_id_*',
+      // Same Criteo/RTB House ids as the ls./ss. entries above, this time as
+      // the cookie itself rather than its localStorage/sessionStorage copy.
+      'cp.cto_bundle', 'cp.__rtbh.uid', 'cp.__rtbh.lid',
       // The only 'qp.' key catalogued so far — a QUERY PARAMETER data source,
       // not a cookie. It is Google's, which is why it sits in this group.
       'qp._gl'
     ], labels: {
       'fb_event_id_*': 'Meta event id for pixel/CAPI dedupe (per tag)',
+      // See the ls.cto_bundle / ls.__rtbh.* labels above for what is and is not
+      // documented about these two vendors.
+      'cp.cto_bundle':  'Criteo — cross-page/cross-visit match id (marketing, ~13-month lifetime)',
+      'cp.__rtbh.uid':  'RTB House retargeting — user id (their own term, "UID")',
+      'cp.__rtbh.lid':  'RTB House retargeting cookie — pairs with __rtbh.uid; "lid" is not documented',
       'cp._ga':      'GA client id',
       'cp._ga_*':    'GA4 session state (per property)',
       'cp._fbp':     'Meta browser id',
@@ -663,6 +713,26 @@
         'payload.locale':    'Browser locale',
         'payload.timezone':  'Browser timezone'
       }},
+    // Addrevenue (Nordic affiliate/CPA network). track.js posts a conversion to
+    // /t and a keep-alive ping to /ajax/heartbeat, both as JSON fetch bodies;
+    // the two share this one group because the heartbeat's fields are a subset
+    // of the conversion's — same meaning, so one label each covers both.
+    { name: 'Addrevenue (on the wire)', id: 'addrevenue_wire', scope: { endpoint: ['addrevenue'] },
+      keys: [
+        'value', 'currency', 'orderId', 'type', 'url', 'advertiserId',
+        'channelId', 'clickId', 'version', 'fromTrackJs'
+      ], labels: {
+        'value':        'Order / conversion value',
+        'currency':     'Currency of value',
+        'orderId':      'Your order reference — dedupes the conversion',
+        'type':         'Addrevenue event type (sale, heartbeat, …)',
+        'url':          'Page URL that triggered the hit',
+        'advertiserId': 'Addrevenue advertiser id',
+        'channelId':    'Addrevenue channel (affiliate/publisher) id',
+        'clickId':      'Addrevenue click id — ties the conversion back to the click',
+        'version':      'Addrevenue tracking script version',
+        'fromTrackJs':  'Sent client-side by track.js, not server-to-server'
+      }},
     { name: 'GA4 (on the wire)', id: 'ga4_wire', scope: { endpoint: ['ga4'] },
       keys: [
         'en', 'tid', 'v', 'cid', 'sid', 'sct', 'seg', '_p', '_s', 'uid',
@@ -943,6 +1013,15 @@
     // the flattened body, so 'payload.href' is the literal captured key.
     { id: 'promptwatch', kind: 'vendor', vendor: 'PromptWatch', eventKey: ['action'],
       host: /(^|\.)promptwatch\.com$/i, test: /\/event(\?|$)/i },
+    // Addrevenue affiliate pixel. track.js fires two JSON fetch POSTs, a
+    // conversion to /t and a keep-alive to /ajax/heartbeat; both share the
+    // 'addrevenue' id (and so one pill, one catalogue group) the same way
+    // GTM's /a and /td entries share theirs — the vendor text tells them apart
+    // on the row itself.
+    { id: 'addrevenue', kind: 'vendor', vendor: 'Addrevenue', eventKey: ['type'],
+      host: /(^|\.)addrevenue\.io$/i, test: /\/t(\?|$)/i },
+    { id: 'addrevenue', kind: 'vendor', vendor: 'Addrevenue (heartbeat)', eventKey: ['type'],
+      host: /(^|\.)addrevenue\.io$/i, test: /\/ajax\/heartbeat(\?|$)/i },
     // GA4. /g/collect is distinctive enough to need no host guard, which is what
     // catches a server-side container on a first-party domain.
     { id: 'ga4', kind: 'vendor', vendor: 'Google Analytics 4', eventKey: ['en'],
@@ -987,6 +1066,9 @@
     // it is the one family nothing else here occupies, which is the only job a
     // pill colour has to do.
     'promptwatch': { tag: 'PWATCH', colour: '#795548' },
+    // Approximate — not a verified brand colour, picked only to stay distinct
+    // from everything else in this table.
+    'addrevenue': { tag: 'ADDREV', colour: '#558b2f' },
     // Grey on purpose: GTM's ping measures nothing, it only proves GTM is here.
     // A brand colour would give it the same visual weight as a real marketing
     // hit, which is the wrong signal.
@@ -1265,6 +1347,16 @@
   MIGRATIONS.push({ v: '8.2', keys: [
     'cp._gcl_gs', 'cp.__gcl_aw', 'cp.__gcl_gs',
     'meta.pageview_name', 'meta.external_ids'
+  ] });
+  // 8.4 adds the Addrevenue affiliate pixel — track.js's conversion post to
+  // /t and its keep-alive ping to /ajax/heartbeat. Neither endpoint was
+  // matched before, so there is no visibility to preserve; every key is
+  // ticked so the vendor shows up in full the first time it's seen.
+  MIGRATIONS.push({ v: '8.4', keys: [
+    'addrevenue_wire:value', 'addrevenue_wire:currency', 'addrevenue_wire:orderId',
+    'addrevenue_wire:type', 'addrevenue_wire:url', 'addrevenue_wire:advertiserId',
+    'addrevenue_wire:channelId', 'addrevenue_wire:clickId', 'addrevenue_wire:version',
+    'addrevenue_wire:fromTrackJs'
   ] });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
