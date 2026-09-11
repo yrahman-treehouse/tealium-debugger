@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      8.4
+// @version      8.5
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -2219,12 +2219,25 @@
     setTimeout(function () { if (activeUdo === info) activeUdo = null; }, 0);
   }
   var hooked = false;
+  // utag.link() and utag.view() are thin wrappers that delegate to utag.track()
+  // inside utag.js, so all three of our wrappers fire for a single site-level
+  // call and the same event lands in the log twice, milliseconds apart, once
+  // via:"link" and once via:"track". Only the outermost call is a real event;
+  // the depth counter records that one and stays quiet for the delegation
+  // underneath it. Sites that call utag.track('link', data) directly are
+  // unaffected — that call IS the outermost one.
+  var utagDepth = 0;
   function hook(u) {
     if (hooked || !u || typeof u.track !== 'function') return false;
     ['view', 'link', 'track'].forEach(function (fn) {
       var orig = u[fn];
       if (typeof orig !== 'function' || orig.__cap) return;
-      var w = function () { record(fn, arguments); return orig.apply(u, arguments); };
+      var w = function () {
+        if (!utagDepth) record(fn, arguments);
+        utagDepth++;
+        try { return orig.apply(u, arguments); }
+        finally { utagDepth--; }
+      };
       w.__cap = true;
       u[fn] = w;
     });
