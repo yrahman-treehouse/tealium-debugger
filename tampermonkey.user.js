@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      8.6
+// @version      8.8
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -1140,11 +1140,17 @@
   var CONTAINERS = [
     { id: 'tealium', name: 'Tealium', short: 'Tealium', colour: '#26c6da',
       test: /(^|\.)tiqcdn\.com\/|\/utag(\.js|\.sync\.js|\/)/i },
-    // gtm.js is a GTM container; gtag/js and gtag/destination are the Google tag.
-    // Both are Google-managed and neither is Tealium, which is the distinction
-    // that matters here, so they share one id.
-    { id: 'gtm', name: 'Google Tag Manager / gtag', short: 'GTM', colour: '#9aa0a6',
-      test: /(^|\.)googletagmanager\.com\/(gtm\.js|gtag\/|a(\?|$))|\/gtag\/js/i },
+    // gtm.js (and GTM's /a diagnostics ping) is the GTM container. gtag.js and
+    // gtag/destination are deliberately NOT here: they are a LIBRARY, and one
+    // instance serves every caller on the page — Tealium's Google Ads tag pushes
+    // into the same gtag.js that GTM or the page may have loaded. Matching its
+    // URL here attributed every Google Ads hit on huurwoningen.com to GTM after
+    // GTM's Google Ads tags had been paused (2026-09-16). gtag.js now inherits
+    // its owner through scriptOwner (whoever inserted the <script>), and hits
+    // it sends are attributed by the gtag COMMAND that caused them — see
+    // GTAG COMMANDS below.
+    { id: 'gtm', name: 'Google Tag Manager', short: 'GTM', colour: '#9aa0a6',
+      test: /(^|\.)googletagmanager\.com\/(gtm\.js|a(\?|$))/i },
     { id: 'adobe', name: 'Adobe Launch / DTM', short: 'Adobe', colour: '#fa0f00',
       test: /(^|\.)assets\.adobedtm\.com\/|\/(launch|satelliteLib)-[A-Za-z0-9]+(\.min)?\.js/i },
     { id: 'commandersact', name: 'Commanders Act', short: 'CmdrsAct', colour: '#9575cd',
@@ -1172,7 +1178,10 @@
   // Only parameters whose value names a tag manager are used. Google's 'gtm='
   // is deliberately absent: it is the gtag library version and is present
   // whenever gtag.js is loaded, including when Tealium is the thing that loaded
-  // it, so it proves nothing about which container fired the hit. 'scrsrc' does.
+  // it, so it proves nothing about which container fired the hit. Nor does
+  // 'scrsrc': it is the host gtag.js was served from, googletagmanager.com no
+  // matter who inserted the script, so it used to "confirm" GTM on hits that
+  // Tealium fired. Google hits are attributed by their gtag command instead.
   // ───────────────────────────────────────────────────────────────────────────
   var CONTAINER_DECLARED = [
     // Meta writes its integration agent here: tmtealium, plgtagmanager, …
@@ -1180,9 +1189,7 @@
     // Reddit names the reporting partner.
     { param: 'partner', tealium: /^tealium$/i,    gtm: /^google/i },
     // UET's tag-source marker, e.g. gtm002.
-    { param: 'tm',      tealium: /tealium/i,      gtm: /^gtm/i },
-    // Google's own: the host of the script that sent the hit.
-    { param: 'scrsrc',  tealium: /tiqcdn/i,       gtm: /googletagmanager|googlesyndication/i }
+    { param: 'tm',      tealium: /tealium/i,      gtm: /^gtm/i }
   ];
   // Never a tracking hit whatever the query string says: a library with a
   // cache-busting ?v= is still a library.
@@ -1988,6 +1995,14 @@
         nline('fired by', nn.fired_by +
           (nn.fired_by_how === 'tealium:via' || nn.fired_by_how === 'gtm:via'
             ? '  ·  via ' + nn.fired_by_script : '') +
+          // Attributed by gtag command: name the command and the library that
+          // actually dispatched the request, so 'Tealium via gtag.js' reads as
+          // exactly that.
+          (/:command$/.test(nn.fired_by_how || '')
+            ? '  ·  ' + (nn.fired_by_command || 'gtag command') +
+              (nn.fired_by_script ? ' in ' + nn.fired_by_script : '') +
+              (nn.fired_by_dispatcher ? '  ·  sent by ' + nn.fired_by_dispatcher : '')
+            : '') +
           (nn.fired_by_conflict ? '  ·  ⚠ ' + nn.fired_by_conflict
                                 : nn.fired_by_basis ? '  ·  ' + nn.fired_by_basis : ''));
       }
@@ -2383,6 +2398,133 @@
     if (frames.length) return { origin: 'page', container: '', script: frames[0] };
     return { origin: 'unknown', container: '', script: '' };
   }
+  // ───────────────────────────────────────────────────────────────────────────
+  // GTAG COMMANDS — who asked gtag.js to send this.
+  //
+  // gtag('event', …) is nothing but dataLayer.push(arguments). The CALLER is on
+  // the stack at that moment — utag.45.js, gtm.js, or inline page code. The
+  // network request happens later, when gtag.js drains its queue on its own
+  // tick, and by then the caller is gone: the only frame is gtag.js itself. So
+  // attributing Google hits from the request's stack can never be right on a
+  // page where more than one thing talks to gtag, and one gtag.js instance
+  // serves everyone. This records each command WITH its caller, and firedBy()
+  // joins a Google hit back to the command that caused it by content: the
+  // AW-/G- id, the conversion label, the transaction id, the event name, within
+  // a short window. The stack-based owner stays as the fallback, so nothing is
+  // lost when no command matches — only precision is gained when one does.
+  //
+  // dataLayer.push is wrapped through an accessor so the wrap survives gtag.js
+  // and gtm.js each installing their own push: their function is captured as
+  // the inner call instead of replacing ours.
+  // ───────────────────────────────────────────────────────────────────────────
+  var GTAG_CMD_MAX = 200;
+  var GTAG_CMD_WINDOW_MS = 3000;
+  var gtagCmds = [];
+  function noteGtagCommand(a) {
+    try {
+      if (!a || typeof a !== 'object' || typeof a[0] !== 'string') return;
+      if (!/^(event|config|consent|set|js)$/.test(a[0])) return;
+      var p = (a[2] && typeof a[2] === 'object') ? a[2] : {};
+      var targets = a[0] === 'config' ? [a[1]] : [].concat(p.send_to || []);
+      var cmd = { at: Date.now(), cmd: a[0], name: String(a[1] || ''), by: attributionFor(),
+                  ids: [], labels: [], tx: String(p.transaction_id || '') };
+      targets.forEach(function (t) {
+        var parts = String(t || '').split('/');
+        var id = parts[0].replace(/^(AW|G|DC|GT|MC)-/i, '');
+        if (id) cmd.ids.push(id);
+        if (parts[1]) cmd.labels.push(parts[1]);
+      });
+      gtagCmds.push(cmd);
+      if (gtagCmds.length > GTAG_CMD_MAX) gtagCmds.shift();
+    } catch (e) {}
+  }
+  // gtm.js and utag.js both install their own dataLayer.push by reading the
+  // current one first and calling it from inside theirs. Through the accessor
+  // the one they read is OUR wrapper, so a naive `real = fn` closes the loop:
+  // wrapped -> theirs -> wrapped -> … until the stack blows. Keep the chain
+  // instead — every push ever assigned, oldest first — and on re-entry call the
+  // link BELOW the one we are already inside, which is exactly the function
+  // that caller captured. The chain bottoms out at the array's native push, so
+  // the recursion always terminates.
+  function wrapDataLayerPush(arr) {
+    try {
+      if (!arr || typeof arr.push !== 'function' || arr.push.__cap) return;
+      var chain = [arr.push];
+      var depth = 0;
+      var wrapped = function () {
+        var idx = chain.length - 1 - depth;
+        if (idx < 0) idx = 0;
+        var target = chain[idx];
+        depth++;
+        try {
+          // Only the outermost entry is a real push by the caller; the nested
+          // ones are the same values travelling back down the chain.
+          if (depth === 1) {
+            for (var i = 0; i < arguments.length; i++) noteGtagCommand(arguments[i]);
+          }
+          return target.apply(this, arguments);
+        } finally { depth--; }
+      };
+      wrapped.__cap = true;
+      Object.defineProperty(arr, 'push', {
+        configurable: true, enumerable: false,
+        get: function () { return wrapped; },
+        set: function (fn) { if (typeof fn === 'function' && !fn.__cap) chain.push(fn); }
+      });
+    } catch (e) {}
+  }
+  function installGtagCommandHook() {
+    try {
+      var dl = window.dataLayer;
+      if (!Array.isArray(dl)) { dl = []; }
+      wrapDataLayerPush(dl);
+      // Wrap whatever is assigned to window.dataLayer later as well — a site
+      // that does window.dataLayer = window.dataLayer || [] keeps ours, but one
+      // that assigns a fresh array would otherwise slip past.
+      Object.defineProperty(window, 'dataLayer', {
+        configurable: true, enumerable: true,
+        get: function () { return dl; },
+        set: function (v) { dl = v; if (Array.isArray(v)) wrapDataLayerPush(v); }
+      });
+    } catch (e) {}
+  }
+  // The AW-/G- id a Google hit belongs to: the path segment on the classic
+  // endpoints (/viewthroughconversion/696807489/, /rmkt/collect/696807489/),
+  // 'tid' on the newer ones (tid=AW-696807489, tid=G-XXXX).
+  function googleHitId(d, url) {
+    var m = /\/(?:pagead\/(?:1p-)?(?:viewthrough)?conversion|rmkt\/collect|user-list)\/(?:AW-)?(\d+)/i.exec(String(url || ''));
+    if (m) return m[1];
+    var t = d && d.tid; if (Array.isArray(t)) t = t[0];
+    return t ? String(t).replace(/^(AW|G|DC|GT|MC)-/i, '') : '';
+  }
+  function gtagCommandFor(d, url) {
+    if (!gtagCmds.length) return null;
+    var id = googleHitId(d, url);
+    if (!id) return null;
+    var label = d && d.label; if (Array.isArray(label)) label = label[0];
+    var oid = d && d.oid; if (Array.isArray(oid)) oid = oid[0];
+    var en = d && d.en; if (Array.isArray(en)) en = en[0];
+    var now = Date.now(), i;
+    // Most recent first: the command that just ran is the one that sent this.
+    for (i = gtagCmds.length - 1; i >= 0; i--) {
+      var c = gtagCmds[i];
+      if (now - c.at > GTAG_CMD_WINDOW_MS) break;
+      if (c.ids.indexOf(id) < 0) continue;
+      if (label) {
+        // A labelled hit is a conversion: only a command carrying that label.
+        if (c.labels.indexOf(String(label)) < 0) continue;
+        if (oid && c.tx && String(oid) !== c.tx) continue;
+      } else if (c.labels.length) {
+        // An unlabelled hit (config ping, remarketing page_view) never comes
+        // from a conversion command.
+        continue;
+      }
+      if (en && c.cmd === 'event' && c.name && !/^(conversion|purchase|page_view)$/.test(c.name) &&
+          String(en) !== c.name) continue;
+      return c;
+    }
+    return null;
+  }
   // What the PAYLOAD says fired it, independent of the stack. Returns '' when
   // the hit carries no such marker, which is most of them.
   function declaredContainer(d) {
@@ -2404,11 +2546,23 @@
   // which is as certain as this gets. 'conflict' means they do not — reported
   // rather than resolved, because silently preferring one would hide exactly the
   // situation worth knowing about.
-  function firedBy(d, endpoint) {
+  function firedBy(d, endpoint, url) {
     var att = attributionFor();
     var declared = declaredContainer(d);
     // The GTM diagnostics ping is GTM talking about itself.
     if (!att.container && endpoint === 'gtm') att = { origin: 'gtm:direct', container: 'gtm', script: '' };
+    // Google Ads / GA4: the request is made by gtag.js, so the stack names the
+    // library, not the caller. The gtag command that caused the hit knows who
+    // called — prefer it, and report the stack's script as the dispatcher.
+    var cmd = null;
+    if (endpoint === 'gads' || endpoint === 'ga4') cmd = gtagCommandFor(d, url);
+    if (cmd && cmd.by && cmd.by.container) {
+      att = { origin: cmd.by.container + ':command', container: cmd.by.container,
+              script: cmd.by.script || att.script, dispatcher: att.script ? shortScript(att.script) : '' };
+    } else if (cmd && cmd.by && cmd.by.origin === 'page') {
+      att = { origin: 'page', container: '', script: cmd.by.script || att.script,
+              dispatcher: att.script ? shortScript(att.script) : '' };
+    }
     var id = att.container || declared;
     var out = {
       container: id,
@@ -2417,12 +2571,16 @@
       script: att.script ? shortScript(att.script) : '',
       declared: declared
     };
+    if (att.dispatcher) out.dispatcher = att.dispatcher;
+    if (cmd) out.command = cmd.cmd + (cmd.name ? ' ' + cmd.name : '');
     if (id && declared && att.container && declared !== att.container) {
       out.conflict = 'stack says ' + att.container + ', payload says ' + declared;
       out.basis = 'stack and payload DISAGREE';
     } else if (declared && att.container && att.container === declared) {
       out.confirmed = true;
       out.basis = 'stack and payload agree';
+    } else if (att.container && /:command$/.test(att.origin)) {
+      out.basis = 'from the gtag command that caused it';
     } else if (att.container) {
       out.basis = 'from the call stack';
     } else if (declared) {
@@ -2875,10 +3033,12 @@
     };
     // Which tag manager fired this. Computed here, while the stack that made the
     // request is still live — a row cannot be re-attributed later.
-    var fb = firedBy(d, info.endpoint.id);
+    var fb = firedBy(d, info.endpoint.id, info.url);
     row._net.fired_by = fb.name;
     row._net.fired_by_id = fb.container;
     if (fb.script) row._net.fired_by_script = fb.script;
+    if (fb.dispatcher) row._net.fired_by_dispatcher = fb.dispatcher;
+    if (fb.command) row._net.fired_by_command = fb.command;
     if (fb.how) row._net.fired_by_how = fb.how;
     if (fb.confirmed) row._net.fired_by_confirmed = true;
     if (fb.basis) row._net.fired_by_basis = fb.basis;
@@ -3050,6 +3210,10 @@
         });
       }
     } catch (e) {}
+    // dataLayer.push — records every gtag command with its caller, so a Google
+    // hit sent later by gtag.js can be attributed to the container that asked
+    // for it. See GTAG COMMANDS.
+    installGtagCommandHook();
     // script.src — not a request we log, but the record of WHO loaded WHAT,
     // which is what lets a later pixel be attributed to the library that fired
     // it rather than to nobody. Same prototype-setter trick as the image hook.
