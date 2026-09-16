@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      8.8
+// @version      8.9
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -713,14 +713,25 @@
         'payload.locale':    'Browser locale',
         'payload.timezone':  'Browser timezone'
       }},
-    // Addrevenue (Nordic affiliate/CPA network). track.js posts a conversion to
-    // /t and a keep-alive ping to /ajax/heartbeat, both as JSON fetch bodies;
-    // the two share this one group because the heartbeat's fields are a subset
-    // of the conversion's — same meaning, so one label each covers both.
+    // Addrevenue (Nordic affiliate/CPA network). Everything track.js and
+    // mastertag.js call shares this one group — the conversion POST to /t, the
+    // keep-alive to /ajax/heartbeat, and the four GET lookups that resolve the
+    // advertiser, the channel and the partner tag set. Their fields are subsets
+    // of one another with the same meaning throughout, so one label each covers
+    // every endpoint and the row's vendor text says which one was hit.
     { name: 'Addrevenue (on the wire)', id: 'addrevenue_wire', scope: { endpoint: ['addrevenue'] },
       keys: [
         'value', 'currency', 'orderId', 'type', 'url', 'advertiserId',
-        'channelId', 'clickId', 'version', 'fromTrackJs'
+        'channelId', 'clickId', 'version', 'fromTrackJs',
+        // The rest of what sendEvent() attaches to a /t conversion when it has
+        // them: the market, the click identifiers it carried in from the ad
+        // platforms, and the discount / cross-device codes it resolves a channel
+        // from. Absent on most hits — present on the ones that matter.
+        'market', 'clickRef', 'affiliateGclid', 'affiliateUtmSource',
+        'wctid', 'gclid', 'gbraid', 'wbraid',
+        'discountCodes', 'crossDeviceId', 'shopifyEvent',
+        // Query parameters of the lookup endpoints.
+        'code'
       ], labels: {
         'value':        'Order / conversion value',
         'currency':     'Currency of value',
@@ -731,7 +742,19 @@
         'channelId':    'Addrevenue channel (affiliate/publisher) id',
         'clickId':      'Addrevenue click id — ties the conversion back to the click',
         'version':      'Addrevenue tracking script version',
-        'fromTrackJs':  'Sent client-side by track.js, not server-to-server'
+        'fromTrackJs':  'Sent client-side by track.js, not server-to-server',
+        'market':          'Addrevenue market the advertiser is configured for',
+        'clickRef':        'Publisher click reference, passed back on the conversion',
+        'affiliateGclid':  'gclid captured on the affiliate click',
+        'affiliateUtmSource': 'utm_source captured on the affiliate click',
+        'wctid':           'Awin click id carried into the Addrevenue conversion',
+        'gclid':           'Google Ads click id on the landing URL',
+        'gbraid':          'Google Ads click id, app-to-web',
+        'wbraid':          'Google Ads click id, web-to-app',
+        'discountCodes':   'Discount codes used — Addrevenue resolves a channel from them',
+        'crossDeviceId':   'Cross-device id — the other way a channel is resolved',
+        'shopifyEvent':    'Raw Shopify event, only on Shopify integrations',
+        'code':            'Discount code being looked up (getChannelByDiscountCodes)'
       }},
     { name: 'GA4 (on the wire)', id: 'ga4_wire', scope: { endpoint: ['ga4'] },
       keys: [
@@ -1013,11 +1036,50 @@
     // the flattened body, so 'payload.href' is the literal captured key.
     { id: 'promptwatch', kind: 'vendor', vendor: 'PromptWatch', eventKey: ['action'],
       host: /(^|\.)promptwatch\.com$/i, test: /\/event(\?|$)/i },
-    // Addrevenue affiliate pixel. track.js fires two JSON fetch POSTs, a
-    // conversion to /t and a keep-alive to /ajax/heartbeat; both share the
-    // 'addrevenue' id (and so one pill, one catalogue group) the same way
-    // GTM's /a and /td entries share theirs — the vendor text tells them apart
-    // on the row itself.
+    // Addrevenue affiliate pixel — the whole surface its two scripts call:
+    // track.js posts the conversion to /t and a keep-alive to /ajax/heartbeat,
+    // and before either can happen five further endpoints resolve the
+    // advertiser, the channel and the partner tag set. Every entry shares the
+    // 'addrevenue' id (and so one pill, one catalogue group) the same way GTM's
+    // /a and /td entries share theirs — the vendor text tells them apart on the
+    // row itself.
+    //
+    // The lookups, listed BEFORE /t on purpose. endpointFor() takes the first
+    // rule that matches and tests the WHOLE url, and /fetch/advertiser/id?url=
+    // is built with encodeURI, which leaves the page URL's slashes and query
+    // raw inside the parameter — a page path ending in /t would otherwise be
+    // read as a conversion. Specific paths first, generic /t last.
+    //
+    // None of these sends a conversion, but each one is a request
+    // to an affiliate network with the page URL on it, and each is a step the
+    // conversion depends on: if /fetch/advertiser/id answers -1 or the channel
+    // lookups come back empty, sendEvent() returns before it ever posts to /t.
+    // Logging them is how a missing conversion stops being a mystery. They were
+    // already leaving the browser — the discovery survey was reporting
+    // /fetch/advertisers/tags as an unknown third-party endpoint — so this is
+    // naming what was visible, not capturing anything new.
+    //
+    // /fetch/advertisers/tags is mastertag.js asking which partner tags to load
+    // for this page (Intently, Addmax Offers). It is cached in sessionStorage
+    // under 'addrevenue_tags', so it fires once per session per tab, not once
+    // per pageview.
+    { id: 'addrevenue', kind: 'vendor', vendor: 'Addrevenue (partner tags)', eventKey: ['type'],
+      host: /(^|\.)addrevenue\.io$/i, test: /\/fetch\/advertisers\/tags(\?|$)/i },
+    // track.js resolving the advertiser from the page URL, whenever the tag did
+    // not pass an advertiserId itself. The response is the bare id, or -1 for
+    // 'this URL belongs to no advertiser' — which silently ends the conversion.
+    { id: 'addrevenue', kind: 'vendor', vendor: 'Addrevenue (advertiser lookup)', eventKey: ['type'],
+      host: /(^|\.)addrevenue\.io$/i, test: /\/fetch\/advertiser\/id(\?|$)/i },
+    // The two channel lookups: without a clickId, one of these has to return a
+    // channel or no conversion is sent at all.
+    { id: 'addrevenue', kind: 'vendor', vendor: 'Addrevenue (channel by discount code)', eventKey: ['type'],
+      host: /(^|\.)addrevenue\.io$/i, test: /\/ajax\/getChannelByDiscountCodes(\?|$)/i },
+    { id: 'addrevenue', kind: 'vendor', vendor: 'Addrevenue (channel by cross-device id)', eventKey: ['type'],
+      host: /(^|\.)addrevenue\.io$/i, test: /\/ajax\/getChannelByCrossDeviceId(\?|$)/i },
+    // Shopify-only, and we are not a Shopify site — catalogued so that if it
+    // ever does appear it arrives named rather than as a discovery row.
+    { id: 'addrevenue', kind: 'vendor', vendor: 'Addrevenue (Shopify discount code)', eventKey: ['type'],
+      host: /(^|\.)addrevenue\.io$/i, test: /\/ajax\/getDiscountCodeFromShopifyEvent(\?|$)/i },
     { id: 'addrevenue', kind: 'vendor', vendor: 'Addrevenue', eventKey: ['type'],
       host: /(^|\.)addrevenue\.io$/i, test: /\/t(\?|$)/i },
     { id: 'addrevenue', kind: 'vendor', vendor: 'Addrevenue (heartbeat)', eventKey: ['type'],
@@ -1189,7 +1251,14 @@
     // Reddit names the reporting partner.
     { param: 'partner', tealium: /^tealium$/i,    gtm: /^google/i },
     // UET's tag-source marker, e.g. gtm002.
-    { param: 'tm',      tealium: /tealium/i,      gtm: /^gtm/i }
+    { param: 'tm',      tealium: /tealium/i,      gtm: /^gtm/i },
+    // Google's developer id. Tealium's Google Ads / GA4 templates run
+    // gtag('set', {'developer_id.dYmQxMT': true}) and every hit gtag.js then
+    // sends for that destination carries did=dYmQxMT (gdid= on the newer
+    // endpoints). GTM sets no developer id. A stable, version-independent
+    // wire-level tell that the hit came from a Tealium-configured destination.
+    { param: 'did',     tealium: /^dYmQxMT$/ },
+    { param: 'gdid',    tealium: /^dYmQxMT$/ }
   ];
   // Never a tracking hit whatever the query string says: a library with a
   // cache-busting ?v= is still a library.
@@ -1364,6 +1433,19 @@
     'addrevenue_wire:type', 'addrevenue_wire:url', 'addrevenue_wire:advertiserId',
     'addrevenue_wire:channelId', 'addrevenue_wire:clickId', 'addrevenue_wire:version',
     'addrevenue_wire:fromTrackJs'
+  ] });
+  // 8.9 completes Addrevenue: the four lookup endpoints track.js and
+  // mastertag.js call before a conversion can be sent, plus the /t fields
+  // sendEvent() only attaches when it has them. The lookup rows were visible
+  // before as uncatalogued discovery hits, so ticking their keys is what keeps
+  // them visible now that they have names.
+  MIGRATIONS.push({ v: '8.9', keys: [
+    'addrevenue_wire:market', 'addrevenue_wire:clickRef',
+    'addrevenue_wire:affiliateGclid', 'addrevenue_wire:affiliateUtmSource',
+    'addrevenue_wire:wctid', 'addrevenue_wire:gclid',
+    'addrevenue_wire:gbraid', 'addrevenue_wire:wbraid',
+    'addrevenue_wire:discountCodes', 'addrevenue_wire:crossDeviceId',
+    'addrevenue_wire:shopifyEvent', 'addrevenue_wire:code'
   ] });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
@@ -2002,7 +2084,9 @@
             ? '  ·  ' + (nn.fired_by_command || 'gtag command') +
               (nn.fired_by_script ? ' in ' + nn.fired_by_script : '') +
               (nn.fired_by_dispatcher ? '  ·  sent by ' + nn.fired_by_dispatcher : '')
-            : '') +
+            : nn.fired_by_how === 'tealium:developer-id' && nn.fired_by_dispatcher
+              ? '  ·  sent by ' + nn.fired_by_dispatcher
+              : '') +
           (nn.fired_by_conflict ? '  ·  ⚠ ' + nn.fired_by_conflict
                                 : nn.fired_by_basis ? '  ·  ' + nn.fired_by_basis : ''));
       }
@@ -2554,8 +2638,21 @@
     // Google Ads / GA4: the request is made by gtag.js, so the stack names the
     // library, not the caller. The gtag command that caused the hit knows who
     // called — prefer it, and report the stack's script as the dispatcher.
-    var cmd = null;
+    var cmd = null, byDevId = false;
     if (endpoint === 'gads' || endpoint === 'ga4') cmd = gtagCommandFor(d, url);
+    // No command matched (a PerformanceObserver replay outside the window, or a
+    // hit created by the RESPONSE of an earlier hit — the viewthroughconversion
+    // script writes the 1p-user-list images). If the payload carries Tealium's
+    // developer id and the stack only names a Google library (gtag.js,
+    // gtag/destination, the doubleclick script), the library is the dispatcher,
+    // not the author: take the developer id.
+    if (!cmd && (endpoint === 'gads' || endpoint === 'ga4') && declared === 'tealium' &&
+        att.container !== 'tealium' &&
+        (!att.script || /googletagmanager\.com|doubleclick\.net|googleadservices\.com|googlesyndication\.com|google\.(com|[a-z]{2})\//i.test(att.script))) {
+      byDevId = true;
+      att = { origin: 'tealium:developer-id', container: 'tealium', script: '',
+              dispatcher: att.script ? shortScript(att.script) : '' };
+    }
     if (cmd && cmd.by && cmd.by.container) {
       att = { origin: cmd.by.container + ':command', container: cmd.by.container,
               script: cmd.by.script || att.script, dispatcher: att.script ? shortScript(att.script) : '' };
@@ -2581,6 +2678,8 @@
       out.basis = 'stack and payload agree';
     } else if (att.container && /:command$/.test(att.origin)) {
       out.basis = 'from the gtag command that caused it';
+    } else if (byDevId) {
+      out.basis = 'Tealium developer id in the payload; stack named only the Google library';
     } else if (att.container) {
       out.basis = 'from the call stack';
     } else if (declared) {
@@ -3340,7 +3439,8 @@
                 '_net_endpoint', '_net_method', '_net_transport', '_net_status', '_net_ms',
                 '_net_bytes_out', '_net_profile', '_net_route', '_net_datasource', '_net_link',
                 '_net_from', '_net_missing', '_net_changed', '_net_wire_params',
-                '_net_expanded', '_net_tags', '_net_url',
+                '_net_expanded', '_net_tags', '_net_fired_by', '_net_fired_by_how',
+                '_net_fired_by_script', '_net_fired_by_basis', '_net_url',
                 '_dom_interaction_id', '_dom_element_text', '_dom_component_name',
                 '_dom_classes', '_dom_form', '_dom_link', '_dom_mismatch', '_extra'];
     // Derived columns: the markup's own view of the element that was engaged with,
@@ -3366,6 +3466,10 @@
         case '_net_wire_params': return n && n.wire_params != null ? n.wire_params : '';
         case '_net_expanded':  return n && n.expanded ? n.expanded.join(' ; ') : '';
         case '_net_tags':      return n ? (n.tags || '') : '';
+        case '_net_fired_by':  return n ? (n.fired_by || '') : '';
+        case '_net_fired_by_how': return n ? (n.fired_by_how || '') : '';
+        case '_net_fired_by_script': return n ? [n.fired_by_script, n.fired_by_dispatcher ? 'sent by ' + n.fired_by_dispatcher : '', n.fired_by_command].filter(Boolean).join(' · ') : '';
+        case '_net_fired_by_basis': return n ? (n.fired_by_conflict ? 'CONFLICT ' + n.fired_by_conflict : (n.fired_by_basis || '')) : '';
         case '_net_url':       return n ? n.url : '';
         case '_dom_interaction_id': return a ? a.interaction_id : '';
         case '_dom_element_text':   return a ? a.element_text : '';
