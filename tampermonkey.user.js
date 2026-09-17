@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      8.9
+// @version      9.0
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -1252,13 +1252,16 @@
     { param: 'partner', tealium: /^tealium$/i,    gtm: /^google/i },
     // UET's tag-source marker, e.g. gtm002.
     { param: 'tm',      tealium: /tealium/i,      gtm: /^gtm/i },
-    // Google's developer id. Tealium's Google Ads / GA4 templates run
+    // Google's developer id. Tealium's Google Ads template runs
     // gtag('set', {'developer_id.dYmQxMT': true}) and every hit gtag.js then
-    // sends for that destination carries did=dYmQxMT (gdid= on the newer
+    // sends for the AW- destination carries did=dYmQxMT (gdid= on the newer
     // endpoints). GTM sets no developer id. A stable, version-independent
-    // wire-level tell that the hit came from a Tealium-configured destination.
-    { param: 'did',     tealium: /^dYmQxMT$/ },
-    { param: 'gdid',    tealium: /^dYmQxMT$/ }
+    // wire-level tell — but ONLY on Google Ads hits: 'set' is global to the
+    // shared gtag instance, so once Tealium has run it, GTM's GA4 hits sent
+    // afterwards carry gdid=dYmQxMT too (seen 2026-09-16: GA4 page_view without
+    // it, user_engagement a second later with it). Hence the 'only' guard.
+    { param: 'did',     tealium: /^dYmQxMT$/, only: ['gads'] },
+    { param: 'gdid',    tealium: /^dYmQxMT$/, only: ['gads'] }
   ];
   // Never a tracking hit whatever the query string says: a library with a
   // cache-busting ?v= is still a library.
@@ -2042,13 +2045,18 @@
     });
     return out;
   }
-  function print(row) {
+  function print(row, legs) {
     var on = enabledSet();
     var isOn = displayMatcher(row);
     var pill = pillFor(row);
     var colour = pill.colour;
+    var legCount = legs ? legs.length + 1 : 0;
+    var gm = row._kind === 'net' && row._net && row._net.group ? groupMeta[row._net.group] : null;
+    var repeat = gm && gm.repeat_ms != null ? gm.repeat_ms : null;
     var label = row._kind === 'net'
       ? (row._net.endpoint + (row._net.event ? '  ' + row._net.event : '') +
+         (legCount > 1 ? '  ×' + legCount : '') +
+         (repeat != null ? '  ⚠ repeat +' + (repeat / 1000).toFixed(1) + 's' : '') +
          (row._net.batch ? '  [' + row._net.batch.index + '/' + row._net.batch.of + ']' : ''))
       : ((on['interaction_id'] && row.data.interaction_id) ||
          (on['page_category'] && row.data.page_category) || row._type);
@@ -2071,6 +2079,10 @@
         nl.push('  ' + pad(k, 11) + '  ' + v);
       };
       nline('request', String(nn.method || 'GET').toUpperCase() + ' ' + nn.host + nn.req_path);
+      if (repeat != null) {
+        nline('repeat', 'same destination and event already sent from this page ' + (repeat / 1000).toFixed(1) +
+          's earlier — a second ' + (nn.event || 'event') + ', not a leg of the first');
+      }
       // Directly under 'request', because on a site running two tag managers
       // this is the first thing you want to know about a hit.
       if (nn.fired_by) {
@@ -2122,6 +2134,19 @@
       if (nn.paired) {
         nline('from', nn.paired.type + ' at ' + nn.paired.time +
           (nn.paired.interaction_id ? '  ·  ' + nn.paired.interaction_id : ''));
+      }
+      if (legs && legs.length) {
+        // Last, because it is the longest: one event, several requests — the
+        // legs the vendor fanned it out to. Each is stored as its own row; this
+        // is the one place they read as one.
+        var all = [row].concat(legs);
+        nline('legs', all.length + ' requests for one ' + (nn.event || 'event') + ':');
+        all.forEach(function (l) {
+          var ln = l._net;
+          nline('', '↳ ' + pad(ln.leg || legName(ln, {}, ln.url), 34) + '  ' + pad(ln.transport || '', 11) +
+            (ln.status != null ? '  HTTP ' + ln.status : '') +
+            (ln.fired_by_id && ln.fired_by_id !== nn.fired_by_id ? '  ⚠ attributed to ' + ln.fired_by : ''));
+        });
       }
       console.log('%c' + (row._type === 'visitor' ? 'Visitor service request'
                         : row._type === 'pixel' ? 'Vendor pixel — sent to ' + (nn.vendor || 'a third party')
@@ -2274,7 +2299,7 @@
     var rows = load();
     rows.push(row);
     save(rows);
-    print(row);
+    if (row._kind === 'net' && row._net && row._net.group) printGrouped(row); else print(row);
     refreshBadge();
     return true;
   }
@@ -2503,14 +2528,14 @@
   // ───────────────────────────────────────────────────────────────────────────
   var GTAG_CMD_MAX = 200;
   var GTAG_CMD_WINDOW_MS = 3000;
-  var gtagCmds = [];
+  var gtagCmds = [], gtagSeq = 0;
   function noteGtagCommand(a) {
     try {
       if (!a || typeof a !== 'object' || typeof a[0] !== 'string') return;
       if (!/^(event|config|consent|set|js)$/.test(a[0])) return;
       var p = (a[2] && typeof a[2] === 'object') ? a[2] : {};
       var targets = a[0] === 'config' ? [a[1]] : [].concat(p.send_to || []);
-      var cmd = { at: Date.now(), cmd: a[0], name: String(a[1] || ''), by: attributionFor(),
+      var cmd = { at: Date.now(), seq: ++gtagSeq, cmd: a[0], name: String(a[1] || ''), by: attributionFor(),
                   ids: [], labels: [], tx: String(p.transaction_id || '') };
       targets.forEach(function (t) {
         var parts = String(t || '').split('/');
@@ -2588,33 +2613,50 @@
     var label = d && d.label; if (Array.isArray(label)) label = label[0];
     var oid = d && d.oid; if (Array.isArray(oid)) oid = oid[0];
     var en = d && d.en; if (Array.isArray(en)) en = en[0];
-    var now = Date.now(), i;
-    // Most recent first: the command that just ran is the one that sent this.
-    for (i = gtagCmds.length - 1; i >= 0; i--) {
-      var c = gtagCmds[i];
-      if (now - c.at > GTAG_CMD_WINDOW_MS) break;
-      if (c.ids.indexOf(id) < 0) continue;
-      if (label) {
-        // A labelled hit is a conversion: only a command carrying that label.
-        if (c.labels.indexOf(String(label)) < 0) continue;
-        if (oid && c.tx && String(oid) !== c.tx) continue;
-      } else if (c.labels.length) {
-        // An unlabelled hit (config ping, remarketing page_view) never comes
-        // from a conversion command.
-        continue;
+    var now = Date.now(), i, pass, c;
+    // Two passes, most recent command first. Pass 0 is strict about the kind
+    // of command: en=gtag.config only matches a 'config', a named event only an
+    // 'event' with that name — otherwise a config ping and the page_view pushed
+    // 20 ms later both land on the page_view command and merge into one group.
+    // Pass 1 relaxes the name only where the label already pins the command
+    // (a conversion Google renames on the wire) or the hit names no event.
+    for (pass = 0; pass < 2; pass++) {
+      for (i = gtagCmds.length - 1; i >= 0; i--) {
+        c = gtagCmds[i];
+        if (now - c.at > GTAG_CMD_WINDOW_MS) break;
+        if (c.ids.indexOf(id) < 0) continue;
+        if (label) {
+          // A labelled hit is a conversion: only a command carrying that label.
+          if (c.labels.indexOf(String(label)) < 0) continue;
+          if (oid && c.tx && String(oid) !== c.tx) continue;
+        } else if (c.labels.length) {
+          // An unlabelled hit (config ping, remarketing page_view) never comes
+          // from a conversion command.
+          continue;
+        }
+        if (pass === 0) {
+          if (String(en) === 'gtag.config') { if (c.cmd !== 'config') continue; }
+          else if (en) { if (c.cmd !== 'event' || c.name !== String(en)) continue; }
+          else if (label) { if (c.cmd !== 'event') continue; }
+        } else {
+          // Relaxed pass only for hits the label already pins (a conversion
+          // whose wire name differs from the command's) or hits with no event
+          // name at all. A named, unlabelled event that matched no command —
+          // Google's own form_start / form_submit — must stay unmatched.
+          if (!label && en) continue;
+        }
+        return c;
       }
-      if (en && c.cmd === 'event' && c.name && !/^(conversion|purchase|page_view)$/.test(c.name) &&
-          String(en) !== c.name) continue;
-      return c;
     }
     return null;
   }
   // What the PAYLOAD says fired it, independent of the stack. Returns '' when
   // the hit carries no such marker, which is most of them.
-  function declaredContainer(d) {
+  function declaredContainer(d, endpoint) {
     if (!d) return '';
     for (var i = 0; i < CONTAINER_DECLARED.length; i++) {
       var rule = CONTAINER_DECLARED[i];
+      if (rule.only && rule.only.indexOf(endpoint) < 0) continue;
       var v = d[rule.param];
       if (Array.isArray(v)) v = v[0];
       if (v === undefined || v === null || v === '') continue;
@@ -2632,7 +2674,7 @@
   // situation worth knowing about.
   function firedBy(d, endpoint, url) {
     var att = attributionFor();
-    var declared = declaredContainer(d);
+    var declared = declaredContainer(d, endpoint);
     // The GTM diagnostics ping is GTM talking about itself.
     if (!att.container && endpoint === 'gtm') att = { origin: 'gtm:direct', container: 'gtm', script: '' };
     // Google Ads / GA4: the request is made by gtag.js, so the stack names the
@@ -2646,7 +2688,7 @@
     // developer id and the stack only names a Google library (gtag.js,
     // gtag/destination, the doubleclick script), the library is the dispatcher,
     // not the author: take the developer id.
-    if (!cmd && (endpoint === 'gads' || endpoint === 'ga4') && declared === 'tealium' &&
+    if (!cmd && endpoint === 'gads' && declared === 'tealium' &&
         att.container !== 'tealium' &&
         (!att.script || /googletagmanager\.com|doubleclick\.net|googleadservices\.com|googlesyndication\.com|google\.(com|[a-z]{2})\//i.test(att.script))) {
       byDevId = true;
@@ -2669,7 +2711,11 @@
       declared: declared
     };
     if (att.dispatcher) out.dispatcher = att.dispatcher;
-    if (cmd) out.command = cmd.cmd + (cmd.name ? ' ' + cmd.name : '');
+    if (cmd) { out.command = cmd.cmd + (cmd.name ? ' ' + cmd.name : ''); out.cmd_seq = cmd.seq; }
+    // Full URL of the frame that made the request, for the fan-out grouping:
+    // the 1p-user-list images are written by the viewthroughconversion script,
+    // whose URL carries the parent event's random=.
+    out.stack_url = (attributionFor().script) || '';
     if (id && declared && att.container && declared !== att.container) {
       out.conflict = 'stack says ' + att.container + ', payload says ' + declared;
       out.basis = 'stack and payload DISAGREE';
@@ -2689,6 +2735,169 @@
       out.basis = 'named in the payload';
     }
     return out;
+  }
+  // ───────────────────────────────────────────────────────────────────────────
+  // FAN-OUT GROUPS — one event, several requests.
+  //
+  // One gtag('event','page_view') to a Google Ads destination leaves the browser
+  // as five or six requests: rmkt/collect, ccm/collect (twice, apvc=1/0) plus its
+  // ad.doubleclick.net/ccm/s/collect companion, the viewthroughconversion ping,
+  // and the two 1p-user-list images (google.com, google.nl) that the ping's
+  // RESPONSE script writes. Read as rows they look like six page views. They
+  // are one event; the fan-out is Google's transport.
+  //
+  // No single URL parameter identifies the event: rcb is a per-page counter,
+  // random/fst is per event but absent on ccm/collect and re-rolled on the
+  // 1p-user-list children. So the group key is anchored on the thing that IS
+  // one-per-event — the gtag command (cmd_seq from firedBy) — and the legs that
+  // never match a command are joined through their parent:
+  //   1p-user-list  → the dispatching viewthroughconversion script's random=
+  //   ccm/s/collect → the latest ccm/collect with the same auid, ≤1.5 s
+  //   anything else → same destination id + event name, ≤1.5 s
+  // A genuine second page_view is a new command and stays a separate group,
+  // which a plain time-window dedup would wrongly swallow.
+  //
+  // Every request is still stored as its own row — a missing leg is itself a
+  // finding. The grouping is metadata (_net.group, _net.leg, _net.leg_n) and
+  // the console collapses a group to one line after a short debounce. The
+  // same machinery covers Meta's image+POST pair, Awin's read.img+sread.php
+  // pair and UET — see GROUP_RULES for the per-vendor handles.
+  // ───────────────────────────────────────────────────────────────────────────
+  var GROUP_WINDOW_MS = 1500;
+  var GROUP_PRINT_DEBOUNCE_MS = 700;
+  // A NEW group for the same destination + event on the same page within this
+  // long is a repeat — a double utag.view, a re-fire after consent, an SPA
+  // navigation that didn't change the path. Legitimate or not, it is the thing
+  // a dedup could hide, so it is flagged on the headline rather than merged.
+  var GROUP_REPEAT_MS = 10000;
+  var groupLastByIdEventPath = {};
+  // Per endpoint: how to read the destination id and the event name off a hit,
+  // and which parameters are stable HANDLES shared by every leg of one event.
+  // A handle is exact — two hits with the same handle are one event, full stop.
+  // The id+event time window is the fallback when no handle is present.
+  //   gads   random/fst is stamped once per event (absent on ccm/collect, re-rolled
+  //          on the 1p-user-list children, which join via their parent script);
+  //          auid ties the ccm/s/collect companion to its ccm/collect.
+  //   fb/tr  eid is Meta's event id, the same on the image GET and the form POST
+  //          fbevents.js sends for one event (and what CAPI dedupes against).
+  //   awin   the order reference: read.img and sread.php both carry it.
+  //   uet    mid is UET's message id, one per hit; pageLoad and custom events
+  //          have different mids and stay apart.
+  //   rp.gif Reddit sends one image per rdt('track'); id+event+window only.
+  // Addrevenue is deliberately NOT here: its lookups, heartbeat and /t are
+  // different requests with different meanings, and seeing each one is the
+  // point of cataloguing them.
+  var GROUP_RULES = {
+    'gads':  { id: function (d, url) { return googleHitId(d, url); },
+               event: ['en'], handles: ['random'], link: ['auid'] },
+    'fb/tr': { id: function (d) { return pick(d, 'id'); },
+               event: ['ev'], handles: ['eid'] },
+    'awin':  { id: function (d) { return pick(d, 'merchant'); },
+               event: ['tt'], handles: ['ref'] },
+    'uet':   { id: function (d) { return pick(d, 'ti'); },
+               event: ['evt', 'ea'], handles: ['mid'] },
+    'rp.gif':{ id: function (d) { return pick(d, 'id'); },
+               event: ['event'], handles: [] }
+  };
+  var groupByHandle = {}, groupByLink = {}, groupByIdEvent = {}, groupSize = {};
+  var groupMeta = {};                            // group → { id, event, container, at }
+  function pick(d, k) {
+    var v = d && d[k];
+    return Array.isArray(v) ? String(v[0]) : (v == null ? '' : String(v));
+  }
+  function groupKeyFor(nn, d, url, fb) {
+    var rule = GROUP_RULES[nn.endpoint];
+    if (!rule) return '';
+    var q = {}; try { q = parseQuery(new URL(url).search); } catch (e) {}
+    var dd = {}; Object.keys(q).forEach(function (k) { dd[k] = q[k]; });
+    Object.keys(d || {}).forEach(function (k) { dd[k] = d[k]; });
+    var ep = nn.endpoint, id = rule.id(dd, url) || '', now = Date.now(), g = '';
+    var en = rule.event.map(function (k) { return pick(dd, k); }).filter(Boolean).join('/');
+    var handles = rule.handles.map(function (k) { var v = pick(dd, k); return v ? ep + ':' + k + ':' + (id ? id + ':' : '') + v : ''; }).filter(Boolean);
+    var links = (rule.link || []).map(function (k) { var v = pick(dd, k); return v ? ep + ':' + k + ':' + v : ''; }).filter(Boolean);
+    // 1. The gtag command that caused it (Google only).
+    if (fb && fb.cmd_seq) g = 'cmd:' + fb.cmd_seq;
+    // 2. A child of an earlier leg: the dispatching script carries the parent's
+    //    handle (Google's viewthroughconversion script → 1p-user-list images).
+    if (!g && fb && fb.stack_url && ep === 'gads') {
+      var pm = /[?&]random=(\d+)/.exec(fb.stack_url), pid = googleHitId({}, fb.stack_url) || id;
+      if (pm && groupByHandle['gads:random:' + pid + ':' + pm[1]]) g = groupByHandle['gads:random:' + pid + ':' + pm[1]];
+    }
+    // 3. A handle already seen on a sibling leg.
+    for (var h = 0; !g && h < handles.length; h++) if (groupByHandle[handles[h]]) g = groupByHandle[handles[h]];
+    // 4. A weaker link (auid) inside the window — for legs with no id and no event.
+    for (var l = 0; !g && l < links.length; l++) {
+      if (groupByLink[links[l]] && now - groupByLink[links[l]].at <= GROUP_WINDOW_MS) g = groupByLink[links[l]].group;
+    }
+    // 5. Same destination + event name inside the window.
+    if (!g && id && en && groupByIdEvent[ep + ':' + id + ':' + en] && now - groupByIdEvent[ep + ':' + id + ':' + en].at <= GROUP_WINDOW_MS) {
+      g = groupByIdEvent[ep + ':' + id + ':' + en].group;
+    }
+    var fresh = false;
+    if (!g) { g = 'hit:' + now.toString(36) + ':' + Math.random().toString(36).slice(2, 6); fresh = true; }
+    if (!groupMeta[g]) fresh = true;
+    // Repeat detection: a fresh group for an id+event this page already sent.
+    if (fresh && id && en) {
+      var rk = ep + ':' + id + ':' + en + ':' + location.pathname, prev = groupLastByIdEventPath[rk];
+      groupLastByIdEventPath[rk] = { group: g, at: now };
+      if (prev && prev.group !== g && now - prev.at <= GROUP_REPEAT_MS) {
+        groupMeta[g] = { id: id, event: en, at: now, repeat_ms: now - prev.at };
+      }
+    }
+    // Remember every handle this leg offers, so later legs can find the group.
+    handles.forEach(function (k) { groupByHandle[k] = g; });
+    links.forEach(function (k) { groupByLink[k] = { group: g, at: now }; });
+    if (id && en) groupByIdEvent[ep + ':' + id + ':' + en] = { group: g, at: now };
+    if (!groupMeta[g]) groupMeta[g] = { id: id, event: en, at: now };
+    else if (!groupMeta[g].event && en) groupMeta[g].event = en;
+    return g;
+  }
+  // 'google.nl/1p-user-list', 'ccm/collect apvc=1', 'viewthroughconversion' —
+  // enough to tell the legs apart on one line, nothing more.
+  function legName(nn, d, url) {
+    var host = nn.host || '', path = nn.req_path || '', q = {};
+    try { q = parseQuery(new URL(url).search); } catch (e) {}
+    var segs = path.split('/').filter(function (x) { return x && !/^\d{6,}$/.test(x) && !/^AW-/.test(x); });
+    var name = segs.slice(-2).join('/') || host;
+    if (nn.endpoint === 'gads') {
+      if (/^pagead\//.test(name)) name = segs.slice(-1)[0];
+      if (/google\.(?!com$)[a-z.]+$/.test(host)) name = host.replace(/^www\./, '') + '/' + segs.slice(-1)[0];
+      if (host === 'ad.doubleclick.net') name = 'doubleclick/' + name;
+      if (q.apvc !== undefined) name += ' apvc=' + q.apvc;
+    } else {
+      // Meta: tr (image GET) vs tr POST; Awin: read.img vs sread.php; UET: action vs actionp.
+      var words = segs.filter(function (x) { return !/^\d+$/.test(x); });
+      name = words.slice(-1)[0] || host;
+      var m = String(nn.method || 'GET').toUpperCase();
+      if (m !== 'GET') name += ' ' + m;
+      if (nn.transport && nn.transport !== 'image' && nn.transport !== 'fetch') name += ' (' + nn.transport + ')';
+    }
+    return name;
+  }
+
+  // Console: a fan-out group prints once, after the legs have had time to
+  // arrive; a leg that comes later than that prints as a short indented line.
+  var pendingGroups = {};
+  function printGroupNow(g) {
+    var pg = pendingGroups[g]; if (!pg) return;
+    delete pendingGroups[g];
+    if (pg.timer) clearTimeout(pg.timer);
+    print(pg.head, pg.legs);
+  }
+  function printGrouped(row) {
+    var g = row._net.group;
+    if (pendingGroups[g]) {
+      pendingGroups[g].legs.push(row);
+      return;
+    }
+    if (groupSize[g] > 1) {
+      // The group already printed: this is a straggler.
+      console.log('%c    ↳ ' + legName(row._net, {}, row._net.url) + '%c  ' + row._net.transport +
+        (row._net.status != null ? '  · HTTP ' + row._net.status : '') + '  · late leg of ' + (groupMeta[g] && groupMeta[g].event || 'event'),
+        'color:#777', 'color:#666;font-family:monospace');
+      return;
+    }
+    pendingGroups[g] = { head: row, legs: [], timer: setTimeout(function () { printGroupNow(g); }, GROUP_PRINT_DEBOUNCE_MS) };
   }
   // ───────────────────────────────────────────────────────────────────────────
   // DISCOVERY REGISTRY
@@ -3138,6 +3347,21 @@
     if (fb.script) row._net.fired_by_script = fb.script;
     if (fb.dispatcher) row._net.fired_by_dispatcher = fb.dispatcher;
     if (fb.command) row._net.fired_by_command = fb.command;
+    // Fan-out grouping (Google Ads): which event this request is one leg of.
+    try {
+      var gk = groupKeyFor(row._net, d, info.url, fb);
+      if (gk) {
+        groupSize[gk] = (groupSize[gk] || 0) + 1;
+        row._net.group = gk;
+        row._net.leg = legName(row._net, d, info.url);
+        row._net.leg_n = groupSize[gk];
+        if (groupMeta[gk].repeat_ms != null) row._net.repeat_ms = groupMeta[gk].repeat_ms;
+        if (!groupMeta[gk].container && fb.container) groupMeta[gk].container = fb.container;
+        // A later leg often has the better event name (ccm/collect says
+        // page_view where the config ping says gtag.config): keep the head's.
+        if (groupMeta[gk].event && !row._net.event) row._net.event = groupMeta[gk].event;
+      }
+    } catch (e) {}
     if (fb.how) row._net.fired_by_how = fb.how;
     if (fb.confirmed) row._net.fired_by_confirmed = true;
     if (fb.basis) row._net.fired_by_basis = fb.basis;
@@ -3429,6 +3653,8 @@
   // number drop rather than promising rows the panel will not display.
   function countBy(kind) {
     return load().filter(function (r) {
+      // A fan-out group counts once: its legs are one event on the wire.
+      if (kind === 'net' && r._net && r._net.group && r._net.leg_n > 1) return false;
       return kindOf(r) === kind && pillOn(pillKey(r));
     }).length;
   }
@@ -3440,7 +3666,7 @@
                 '_net_bytes_out', '_net_profile', '_net_route', '_net_datasource', '_net_link',
                 '_net_from', '_net_missing', '_net_changed', '_net_wire_params',
                 '_net_expanded', '_net_tags', '_net_fired_by', '_net_fired_by_how',
-                '_net_fired_by_script', '_net_fired_by_basis', '_net_url',
+                '_net_fired_by_script', '_net_fired_by_basis', '_net_group', '_net_leg', '_net_url',
                 '_dom_interaction_id', '_dom_element_text', '_dom_component_name',
                 '_dom_classes', '_dom_form', '_dom_link', '_dom_mismatch', '_extra'];
     // Derived columns: the markup's own view of the element that was engaged with,
@@ -3466,6 +3692,8 @@
         case '_net_wire_params': return n && n.wire_params != null ? n.wire_params : '';
         case '_net_expanded':  return n && n.expanded ? n.expanded.join(' ; ') : '';
         case '_net_tags':      return n ? (n.tags || '') : '';
+        case '_net_group':     return n ? (n.group || '') : '';
+        case '_net_leg':       return n ? (n.leg ? n.leg + (n.leg_n ? ' #' + n.leg_n : '') + (n.repeat_ms != null ? ' REPEAT +' + n.repeat_ms + 'ms' : '') : '') : '';
         case '_net_fired_by':  return n ? (n.fired_by || '') : '';
         case '_net_fired_by_how': return n ? (n.fired_by_how || '') : '';
         case '_net_fired_by_script': return n ? [n.fired_by_script, n.fired_by_dispatcher ? 'sent by ' + n.fired_by_dispatcher : '', n.fired_by_command].filter(Boolean).join(' · ') : '';
