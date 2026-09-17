@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      9.4
+// @version      9.5
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -571,6 +571,16 @@
     // Nothing here shares a name with the browser pixel's parameters — the
     // gateway speaks flattened JSON ('fb.pixel_id', not 'id') — so it gets its
     // own group rather than being folded into the Meta one.
+    //
+    // Where the gateway address comes from, which is the part worth knowing when
+    // you go looking for who set this up: NOT from Tealium. Meta's own pixel
+    // config, connect.facebook.net/signals/config/<pixel id>, carries an
+    // 'openbridge' block naming the endpoint, a fallbackDomain, alwaysRetry, and
+    // a blocklist of event names the gateway is not sent. It is configured in
+    // Events Manager, and the pixel obeys it without the page knowing.
+    //
+    // 'cee' is read straight from that block: openbridge3.js appends cee=no when
+    // the endpoint's enrichmentDisabled is true, and appends nothing otherwise.
     { name: 'Meta CAPI Gateway (on the wire)', id: 'fbcapi_wire', scope: { endpoint: ['fb_capi'] },
       keys: [
         'cee', 'event_name', 'event_id', 'fb.pixel_id', 'fb.fbp', 'fb.fbc',
@@ -587,7 +597,7 @@
         // from the page rather than what a tag told it.
         'smart_setup.*'
       ], labels: {
-        'cee':          'Client-event-enabled flag on the gateway URL',
+        'cee':          'cee=no — gateway enrichment is disabled',
         'event_name':   'Meta event name (PageView, Search, …)',
         'event_id':     'Event id — MUST match the browser pixel eid',
         'fb.pixel_id':  'Meta pixel id the gateway forwards to',
@@ -1241,6 +1251,14 @@
     // three is what stops this claiming an unrelated Lambda on the same suffix.
     { id: 'fb_capi', kind: 'vendor', vendor: 'Meta CAPI Gateway', eventKey: ['event_name'],
       host: /\.on\.aws$/i, test: /\/events\?(?:[^#]*&)?cee=/i },
+    // The same gateway's configured fallbackDomain, which on both brands is a
+    // Google Cloud Run host rather than an AWS one. Never seen firing — the AWS
+    // endpoint has not failed in any capture — but a retry would otherwise land
+    // in the discovery survey instead of on a Meta row, which is precisely when
+    // you would least want to go looking for it.
+    { id: 'fb_capi', kind: 'vendor', vendor: 'Meta CAPI Gateway (fallback)',
+      eventKey: ['event_name'],
+      host: /\.run\.app$/i, test: /\/events\?(?:[^#]*&)?cee=/i },
     // Thribee's conversion pixel — a bare new Image() to rd.clk.thribee.com,
     // which the HTMLImageElement.src hook below catches.
     //
