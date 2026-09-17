@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      9.1
-// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
+// @version      9.3
+// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
 // @match        *://*.huurwoningen.com/*
@@ -439,7 +439,15 @@
         'integration', 'partner', 'opt_out', 'esurl',
         'ts', 'v', 'sh', 'sw', 'db',
         // Sent alongside m.* on live conversion hits.
-        'category', 'name'
+        'category', 'name',
+        // The POST /rp body carries more than the rp.gif query string ever did.
+        // These are on every one of the 28 captured hits; the mobile-ad id
+        // fields are always empty on web, and are catalogued so that an empty
+        // 'aaid' reads as "web, as expected" rather than as an unknown key.
+        'aaid', 'idfa', 'partner_version', 'drfr',
+        // Named but unlabelled — see the note in the Meta group. Present and
+        // empty on every captured hit, so there is nothing to infer from.
+        'dpm', 'dpcc', 'dprc', 'mthd', 'pm'
       ], labels: {
         'event':          'Reddit event name',
         'id':             'Reddit advertiser / pixel id',
@@ -459,7 +467,11 @@
         'sw':             'Screen width reported to Reddit',
         'db':             'Reddit pixel diagnostics flags',
         'category':       'Product category sent to Reddit',
-        'name':           'Product name sent to Reddit'
+        'name':           'Product name sent to Reddit',
+        'aaid':           'Android ad id — empty on web',
+        'idfa':           'iOS ad id — empty on web',
+        'partner_version': 'Version of the reporting partner integration',
+        'drfr':           'Document referrer'
       }},
     // ─────────────────────────────────────────────────────────────────────────
     // The remaining scoped groups follow the same rule as Reddit's: these are
@@ -548,6 +560,51 @@
         'plt':  'Page load time (ms)',
         'tz':   'Timezone offset from UTC (minutes)',
         'expv2[*': 'Meta feature-flag vector, ~38 codes per hit'
+      }},
+    // Meta's Conversions API Gateway — the SERVER-SIDE twin of the pixel above.
+    // The pixel's own openbridge3 plugin POSTs a JSON copy of each event to a
+    // gateway the advertiser runs on AWS, which forwards it to Meta over the
+    // Conversions API. Both legs carry the SAME event_id, and that is the whole
+    // point of watching this endpoint: if the browser pixel and the gateway
+    // disagree on event_id, Meta counts the conversion twice.
+    //
+    // Nothing here shares a name with the browser pixel's parameters — the
+    // gateway speaks flattened JSON ('fb.pixel_id', not 'id') — so it gets its
+    // own group rather than being folded into the Meta one.
+    { name: 'Meta CAPI Gateway (on the wire)', id: 'fbcapi_wire', scope: { endpoint: ['fb_capi'] },
+      keys: [
+        'cee', 'event_name', 'event_id', 'fb.pixel_id', 'fb.fbp', 'fb.fbc',
+        'website_context.location', 'website_context.referrer',
+        'website_context.isInIFrame',
+        // Advanced matching, and the alternate-normalisation copy of it — the
+        // server-side counterparts of the pixel's ud[* and aud[* parameters.
+        'fb.advanced_matching.*', 'fb.alternative_advanced_matching.*',
+        // Event payload. custom_data.* mirrors what the pixel sends in cd[*.
+        'custom_data.*', 'conversion_value.value', 'conversion_value.currency',
+        'fb.search_string', 'fb.dynamic_product_ads.content_ids',
+        'fb.dynamic_product_ads.content_type',
+        // Meta's automatic page-scraping feature, which reports what it inferred
+        // from the page rather than what a tag told it.
+        'smart_setup.*'
+      ], labels: {
+        'cee':          'Client-event-enabled flag on the gateway URL',
+        'event_name':   'Meta event name (PageView, Search, …)',
+        'event_id':     'Event id — MUST match the browser pixel eid',
+        'fb.pixel_id':  'Meta pixel id the gateway forwards to',
+        'fb.fbp':       'Meta browser id (_fbp), passed server-side',
+        'fb.fbc':       'Meta click id (_fbc), passed server-side',
+        'website_context.location':   'Page URL the event happened on',
+        'website_context.referrer':   'Referrer of that page',
+        'website_context.isInIFrame': 'Whether the page was framed',
+        'fb.advanced_matching.*':             'Advanced matching — hashed em, external_id, client hints',
+        'fb.alternative_advanced_matching.*': 'Advanced matching, alternate-normalisation copy',
+        'custom_data.*':            'Event parameters — value, currency, content_ids …',
+        'conversion_value.value':   'Conversion value',
+        'conversion_value.currency':'Currency of the conversion value',
+        'fb.search_string':         'Search term, on Search events',
+        'fb.dynamic_product_ads.content_ids':  'Listing ids for dynamic ads',
+        'fb.dynamic_product_ads.content_type': 'Dynamic ads content type',
+        'smart_setup.*': 'What Meta auto-detected from the page, not from a tag'
       }},
     { name: 'Awin conversion (on the wire)', id: 'awin_wire', scope: { endpoint: ['awin'] },
       keys: [
@@ -639,8 +696,25 @@
         // here is an AW- conversion id, not a G- measurement id.
         'tid', 'dl', 'dr', 'dt', 'rnd', 'scrsrc', 'tfd', 'ep.*',
         // Named but unlabelled — see the note in the Meta group.
-        'apvc', 'ae', 'navt', 'tft', 'tids', 'gcu', 'gcp', 'gap.fsrc'
+        'apvc', 'ae', 'navt', 'tft', 'tids', 'gcu', 'gcp', 'gap.fsrc',
+        // The /ccm/form-data endpoint — enhanced conversions for leads. This is
+        // the only Google Ads leg that carries a hashed email, so 'em' here is
+        // the parameter to check when enhanced conversions are not matching.
+        'ec_mode', 'em', 'emd', 'ecsid', 'ecsid2',
+        // The Google Ads click-id family as /ccm/form-data spells it.
+        'gclaw_src', 'gclgs', 'gclst', 'gcllp',
+        // Named but unlabelled — see the note in the Meta group.
+        'did', 'gdid'
       ], labels: {
+        'ec_mode':           'Enhanced conversions mode (c = code-supplied)',
+        'em':                'Hashed email for enhanced conversions',
+        'emd':               'Enhanced-conversion match data alongside em',
+        'ecsid':             'Enhanced-conversion session id',
+        'ecsid2':            'Second enhanced-conversion session id',
+        'gclaw_src':         'Where the gclaw click id was read from',
+        'gclgs':             'Google Ads click id, gs variant',
+        'gclst':             'Google Ads click id timestamp',
+        'gcllp':             'Google Ads click id, landing-page variant',
         'label':             'Conversion label — the AW-xxxxx/label pair',
         'value':             'Conversion value',
         'currency_code':     'Currency of value',
@@ -776,6 +850,46 @@
         'crossDeviceId':   'Cross-device id — the other way a channel is resolved',
         'shopifyEvent':    'Raw Shopify event, only on Shopify integrations',
         'code':            'Discount code being looked up (getChannelByDiscountCodes)'
+      }},
+    // Thribee (Lifull Connect — the group behind Trovit, Mitula and Nestoria).
+    // Named for the brand you buy from, but everything on the wire still says
+    // Trovit: the library is analytics.trovit.com/trovit-analytics.js and the
+    // global is window.ta, aliased through TrovitAnalyticsObject.
+    //
+    // Every key below comes from reading that library (js-1.2.0, 3.3KB, captured
+    // whole from a rentaroof session), not from a blog and not from a sample URL.
+    // The library builds the query string itself in one function, so the full
+    // parameter set is knowable without ever seeing a hit — which is just as
+    // well, because no Thribee hit has been captured yet. See the endpoint entry
+    // for why.
+    { name: 'Thribee / Trovit (on the wire)', id: 'thribee_wire', scope: { endpoint: ['thribee'] },
+      keys: [
+        'cod', '_c', '_v', 'sid', '_dc', '_sr', '_t', '_sv', '_z', 'lbl', 'url',
+        'sadid',
+        // Computed by the library's pageview branch and then thrown away: in
+        // js-1.2.0 'pageview' builds these six and breaks WITHOUT sending. They
+        // are catalogued so that if Thribee ever ships a version that does send
+        // a pageview, it arrives named rather than as six uncatalogued keys.
+        'ref', 'ttl', 'sr', 'vp', 'ul', 'de'
+      ], labels: {
+        'cod':   'Always conversion_tracking — the only endpoint mode',
+        '_c':    'Country code from ta(init) — uk on rentaroof',
+        '_v':    'Second ta(init) argument; 1 in every Thribee example',
+        'sid':   'Thribee account id — the hash from ta(init)',
+        '_dc':   'true = arrived from a referrer outside this domain',
+        '_sr':   'Attributed source — referrer domain | utm_source from __utmz',
+        '_t':    'Conversion type (lead, viewPhone, register, …)',
+        '_sv':   'Thribee library version (js-1.2.0)',
+        '_z':    'Cache-buster timestamp (epoch ms)',
+        'lbl':   'Label — the type again, plus | customType on custom',
+        'url':   'Page URL the conversion happened on',
+        'sadid': 'Listing id, from the adId option on ta(send)',
+        'ref':   'Referrer (pageview only — never actually sent, see keys)',
+        'ttl':   'Page title (pageview only — never actually sent)',
+        'sr':    'Screen size WxH (pageview only — never actually sent)',
+        'vp':    'Viewport size WxH (pageview only — never actually sent)',
+        'ul':    'Browser language (pageview only — never actually sent)',
+        'de':    'Document charset (pageview only — never actually sent)'
       }},
     { name: 'GA4 (on the wire)', id: 'ga4_wire', scope: { endpoint: ['ga4'] },
       keys: [
@@ -976,6 +1090,13 @@
     // it. Caught here because it is fired BY a Tealium tag and is exactly the kind
     // of hit worth watching, but it is a vendor pixel and typed as one.
     { id: 'rp.gif', kind: 'vendor', vendor: 'reddit', test: /\/rp\.gif(\?|$)/i },
+    // The same Reddit pixel, current transport: a form-encoded POST to a bare
+    // /rp with no extension. It was firing on every rentaroof capture and
+    // landing in the discovery survey, because the rule above only ever matched
+    // the .gif. Same id on purpose — one pill, one switch, one catalogue group —
+    // and the body carries strictly more than the image URL did.
+    { id: 'rp.gif', kind: 'vendor', vendor: 'reddit', eventKey: ['event'],
+      host: /(^|\.)reddit\.com$/i, test: /\/rp(\?|$)/i },
     { id: 's.gif',           kind: 'collect', test: /\/s\.gif(\?|$)/i },
     { id: 'uidc.gif',        kind: 'collect', test: /\/uidc\.gif(\?|$)/i },
     { id: '/bulk-event',     kind: 'collect', test: /\/bulk-event(\?|$)/i },
@@ -1039,6 +1160,13 @@
     // is the path segment: /rmkt/collect/11229689579/
     { id: 'gads', kind: 'vendor', vendor: 'Google Ads', eventKey: ['label', 'en'],
       test: /\/rmkt\/collect\//i },
+    // Enhanced conversions for leads. The SAME upload is served on two paths —
+    // /ccm/form-data/<AW id> and /pagead/form-data/<AW id> — with a byte-for-byte
+    // identical parameter set across 113 captured hits, so one rule takes both.
+    // Worth separating in your head from the other Google Ads legs even though
+    // it shares their id: this is the only one that uploads a hashed email.
+    { id: 'gads', kind: 'vendor', vendor: 'Google Ads (enhanced conversions)',
+      eventKey: ['label', 'en'], test: /\/(ccm|pagead)\/form-data\//i },
     // GTM reporting on ITSELF — which container loaded, which tags fired. Not a
     // marketing hit and nothing is measured by it, but it is proof that a Google
     // tag container is running on the page and it names the ids that container
@@ -1105,6 +1233,27 @@
       host: /(^|\.)addrevenue\.io$/i, test: /\/t(\?|$)/i },
     { id: 'addrevenue', kind: 'vendor', vendor: 'Addrevenue (heartbeat)', eventKey: ['type'],
       host: /(^|\.)addrevenue\.io$/i, test: /\/ajax\/heartbeat(\?|$)/i },
+    // Meta's Conversions API Gateway. The hostname is a per-deployment hash on
+    // AWS and differs by brand and by region — dv-<32 hex>.ecs.us-east-1.on.aws
+    // on huurwoningen, tw-<32 hex>.ecs.us-west-2.on.aws on rentaroof — so there
+    // is no fixed host to match. The .on.aws suffix plus a /events path plus the
+    // gateway's own 'cee' query parameter is what identifies it; requiring all
+    // three is what stops this claiming an unrelated Lambda on the same suffix.
+    { id: 'fb_capi', kind: 'vendor', vendor: 'Meta CAPI Gateway', eventKey: ['event_name'],
+      host: /\.on\.aws$/i, test: /\/events\?(?:[^#]*&)?cee=/i },
+    // Thribee's conversion pixel — a bare new Image() to rd.clk.thribee.com,
+    // which the HTMLImageElement.src hook below catches.
+    //
+    // NOT YET SEEN ON A REAL HIT, and that is the finding rather than a caveat.
+    // The rentaroof tag loads the library and calls ta('init', …) inside
+    //   if (!pathname.includes('/react/checkout/')) { … }
+    // then calls ta('send','lead') inside a nested
+    //   if (pathname.includes('/react/checkout/')) { … }
+    // The two conditions are each other's negation, so the send is unreachable
+    // and no lead has ever been sent. Catalogued anyway: the day that tag is
+    // fixed, the hit shows up named instead of as a discovery row.
+    { id: 'thribee', kind: 'vendor', vendor: 'Thribee (Trovit)', eventKey: ['_t', 'lbl'],
+      host: /(^|\.)thribee\.com$/i, test: /\/index\.php(\?|$)/i },
     // GA4. /g/collect is distinctive enough to need no host guard, which is what
     // catches a server-side container on a first-party domain.
     { id: 'ga4', kind: 'vendor', vendor: 'Google Analytics 4', eventKey: ['en'],
@@ -1152,6 +1301,13 @@
     // Approximate — not a verified brand colour, picked only to stay distinct
     // from everything else in this table.
     'addrevenue': { tag: 'ADDREV', colour: '#558b2f' },
+    // Meta blue, darkened. Same family as META because it is the same pixel's
+    // other half, distinct enough that a server-side leg never reads as a
+    // browser one while you scroll.
+    'fb_capi': { tag: 'META S2S', colour: '#0a3d91' },
+    // Lifull Connect's magenta, approximate. Distinct from Awin's pink by being
+    // lighter and from Meta's blue by being nowhere near it.
+    'thribee': { tag: 'THRIBEE', colour: '#c2185b' },
     // Grey on purpose: GTM's ping measures nothing, it only proves GTM is here.
     // A brand colour would give it the same visual weight as a real marketing
     // hit, which is the wrong signal.
@@ -1287,6 +1443,31 @@
   // Never a tracking hit whatever the query string says: a library with a
   // cache-busting ?v= is still a library.
   var DISC_ASSET = /\.(js|mjs|cjs|css|less|scss|woff2?|ttf|otf|eot|map|wasm|mp4|webm|ogv|ogg|mp3|wav|flac|pdf|zip|gz|ico|svg|txt|xml|webmanifest)(\?|#|$)/i;
+  // Endpoints the discovery survey should stop reporting. These are NOT
+  // catalogued vendors and never become rows — they are noise that has been
+  // looked at once and ruled out, and the registry is more useful without them.
+  //
+  // Host alone is not enough for either: pagead2.googlesyndication.com also
+  // serves the Google Ads conversion pixel, which must keep matching. So each
+  // rule is host AND path, and the pair is applied only in the discovery survey
+  // — never in endpointFor, where it could hide a real hit.
+  //
+  //   accounts.google.com/gsi/*   Sign in with Google. client_id and the as/bs
+  //                               pair are anti-forgery session tokens for the
+  //                               One Tap prompt, not measurement.
+  //   /pagead/ping                Ad-serving diagnostics from the publisher ad
+  //                               stack. Opaque nested-array body, no ids.
+  var DISC_IGNORE = [
+    { host: /(^|\.)google\.com$/i,             path: /^\/gsi\//i },
+    { host: /(^|\.)googlesyndication\.com$/i,  path: /^\/pagead\/ping(\/|$)/i }
+  ];
+  function discIgnored(host, path) {
+    for (var i = 0; i < DISC_IGNORE.length; i++) {
+      var r = DISC_IGNORE[i];
+      if (r.host.test(host) && r.path.test(path)) return true;
+    }
+    return false;
+  }
   // Content images. A .gif with a query string is treated as pixel-shaped
   // because nothing serves resized content GIFs any more; the others need a
   // reason beyond their extension, which is what keeps image CDNs out of the
@@ -1477,6 +1658,38 @@
   // four are ticked — otherwise cataloguing them is the thing that hides them.
   MIGRATIONS.push({ v: '9.1', keys: [
     'fb_wire:cud[*', 'fb_wire:ncud[*', 'fb_wire:aud[*', 'fb_wire:cs_est'
+  ] });
+  // 9.2 adds Thribee. The endpoint was never matched, so nothing was visible
+  // before and there is no visibility to preserve; every key is ticked so the
+  // vendor shows up whole the first time one of its hits is ever seen.
+  MIGRATIONS.push({ v: '9.2', keys: [
+    'thribee_wire:cod', 'thribee_wire:_c', 'thribee_wire:_v', 'thribee_wire:sid',
+    'thribee_wire:_dc', 'thribee_wire:_sr', 'thribee_wire:_t', 'thribee_wire:_sv',
+    'thribee_wire:_z', 'thribee_wire:lbl', 'thribee_wire:url', 'thribee_wire:sadid',
+    'thribee_wire:ref', 'thribee_wire:ttl', 'thribee_wire:sr', 'thribee_wire:vp',
+    'thribee_wire:ul', 'thribee_wire:de'
+  ] });
+  // 9.3 claims three endpoints the discovery survey found on live traffic.
+  //
+  // Reddit's POST /rp and Google's /ccm/form-data were both VISIBLE as discovery
+  // rows before this release, so their keys must be ticked or naming them is
+  // what makes them disappear. The Meta CAPI Gateway was visible the same way,
+  // and its every key is ticked for the same reason.
+  MIGRATIONS.push({ v: '9.3', keys: [
+    'rdt_wire:aaid', 'rdt_wire:idfa', 'rdt_wire:partner_version', 'rdt_wire:drfr',
+    'rdt_wire:dpm', 'rdt_wire:dpcc', 'rdt_wire:dprc', 'rdt_wire:mthd', 'rdt_wire:pm',
+    'gads_wire:ec_mode', 'gads_wire:em', 'gads_wire:emd', 'gads_wire:ecsid',
+    'gads_wire:ecsid2', 'gads_wire:gclaw_src', 'gads_wire:gclgs', 'gads_wire:gclst',
+    'gads_wire:gcllp', 'gads_wire:did', 'gads_wire:gdid',
+    'fbcapi_wire:cee', 'fbcapi_wire:event_name', 'fbcapi_wire:event_id',
+    'fbcapi_wire:fb.pixel_id', 'fbcapi_wire:fb.fbp', 'fbcapi_wire:fb.fbc',
+    'fbcapi_wire:website_context.location', 'fbcapi_wire:website_context.referrer',
+    'fbcapi_wire:website_context.isInIFrame',
+    'fbcapi_wire:fb.advanced_matching.*', 'fbcapi_wire:fb.alternative_advanced_matching.*',
+    'fbcapi_wire:custom_data.*', 'fbcapi_wire:conversion_value.value',
+    'fbcapi_wire:conversion_value.currency', 'fbcapi_wire:fb.search_string',
+    'fbcapi_wire:fb.dynamic_product_ads.content_ids',
+    'fbcapi_wire:fb.dynamic_product_ads.content_type', 'fbcapi_wire:smart_setup.*'
   ] });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
@@ -3010,6 +3223,7 @@
     try { var U = new URL(abs, location.href); host = U.hostname; path = U.pathname; } catch (e) { return; }
     if (!host || !isThirdParty(host)) return;
     if (NET_IGNORE.test(host)) return;
+    if (discIgnored(host, path)) return;
     if (DISC_ASSET.test(abs)) return;
     var q = {};
     try { q = parseQuery((new URL(abs, location.href)).search); } catch (e) {}
