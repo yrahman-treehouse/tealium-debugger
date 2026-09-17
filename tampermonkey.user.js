@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      9.3
+// @version      9.4
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -283,13 +283,13 @@
       'meta.pageview_name', 'meta.external_ids'
     ], labels: {
       'meta.facebook-domain-verification': 'Meta domain-verification token',
-      'meta.pageview_name': 'Custom UDO — page-view name sent to the Meta pixel',
+      'meta.pageview_name': 'Custom UDO — page-view name sent to Meta',
       // Meta's advanced-matching external_id, plural because the site can supply
       // more than one id for the same person. Deliberately not described as
       // "hashed": whether these arrive already hashed is a property of this
       // profile's mapping, not of the attribute, so check the fb/tr row's ud[*
       // parameters to see what actually left the browser.
-      'meta.external_ids':  'Custom UDO — external_id(s) for Meta advanced matching'
+      'meta.external_ids':  'Custom UDO — external_id(s) for Meta matching'
     }},
     // Everything above this group is the site telling you about itself. These are
     // the identifiers an AD STACK has left in the browser, and a live pararius
@@ -324,20 +324,20 @@
       // a marketing cookie that "provides functions across pages" with a
       // 13-month lifetime — i.e. the id that lets Criteo recognise the same
       // visitor on a later page or a later visit.
-      'ls.cto_bundle':           'Criteo — cross-page/cross-visit match id (marketing, ~13-month lifetime)',
+      'ls.cto_bundle':           'Criteo cross-visit match id (~13-month life)',
       // RTB House's own cookie-matching docs use "UID" for the id its endpoint
       // exchanges with a publisher, which is this cookie. Third-party scanners
       // (Cookiepedia) confirm __rtbh.lid is RTB House too, in the same
       // targeting/advertising category, but neither RTB House nor those
       // scanners document what distinguishes "lid" from "uid" — so the second
       // label says only what is shared, not a guessed distinction.
-      'ls.__rtbh.uid':           'RTB House retargeting — user id (their own term, "UID")',
-      'ls.__rtbh.lid':           'RTB House retargeting cookie — pairs with __rtbh.uid; "lid" is not documented',
+      'ls.__rtbh.uid':           'RTB House retargeting — their user id (UID)',
+      'ls.__rtbh.lid':           'RTB House — pairs with __rtbh.uid; lid unknown',
       // Google's own reCAPTCHA FAQ describes this as existing "for the purpose
       // of providing its risk analysis" — i.e. anti-fraud/anti-bot scoring, not
       // advertising.
-      'ls._grecaptcha':          'Google reCAPTCHA — risk-analysis token (anti-bot, not ad-related)',
-      'ls.webchat-local-data':   'Chat widget — persisted state (vendor not identified)'
+      'ls._grecaptcha':          'Google reCAPTCHA anti-bot token, not ad-related',
+      'ls.webchat-local-data':   'Chat widget — persisted state, vendor unknown'
     }},
     { name: 'sessionStorage', keys: [
       'ss.tealium_fired_events', 'ss.dfValue', 'ss.checkout-conversion:*',
@@ -354,8 +354,8 @@
       'ss.adroll_dqs':            'AdRoll — undocumented session flag',
       'ss.adroll_flgs':           'AdRoll — undocumented session flags',
       'ss.__rtbh.uid':            'RTB House retargeting — user id (session copy)',
-      'ss.__rtbh.lid':            'RTB House retargeting cookie — pairs with __rtbh.uid; session copy',
-      'ss.webchat-session-data':  'Chat widget — this session\'s state (vendor not identified)'
+      'ss.__rtbh.lid':            'RTB House — pairs with __rtbh.uid, session copy',
+      'ss.webchat-session-data':  'Chat widget — session state, vendor unknown'
     }},
     { name: 'Other vendors', keys: [
       'cp._ga', 'cp._ga_*', 'cp._fbp', 'cp._uetsid', 'cp._uetvid', 'cp._gcl_au',
@@ -382,9 +382,9 @@
       'fb_event_id_*': 'Meta event id for pixel/CAPI dedupe (per tag)',
       // See the ls.cto_bundle / ls.__rtbh.* labels above for what is and is not
       // documented about these two vendors.
-      'cp.cto_bundle':  'Criteo — cross-page/cross-visit match id (marketing, ~13-month lifetime)',
-      'cp.__rtbh.uid':  'RTB House retargeting — user id (their own term, "UID")',
-      'cp.__rtbh.lid':  'RTB House retargeting cookie — pairs with __rtbh.uid; "lid" is not documented',
+      'cp.cto_bundle':  'Criteo cross-visit match id (~13-month life)',
+      'cp.__rtbh.uid':  'RTB House retargeting — their user id (UID)',
+      'cp.__rtbh.lid':  'RTB House — pairs with __rtbh.uid; lid unknown',
       'cp._ga':      'GA client id',
       'cp._ga_*':    'GA4 session state (per property)',
       'cp._fbp':     'Meta browser id',
@@ -409,17 +409,17 @@
       // information is not documented anywhere I would cite, so the label says
       // only what Google says. In captures here it arrives alongside _gcl_aw on
       // Google-sourced landings.
-      'cp._gcl_gs':   'Google Ads click info — Conversion Linker (_gcl_* family)',
+      'cp._gcl_gs':   'Google Ads click info — Conversion Linker',
       // Same story as __gcl_au: the __ spelling is not Google's, so a value in one
       // of these came from a data source in the profile, not from the Google tag.
-      'cp.__gcl_aw':  'Google Ads Search click id — non-standard __ cookie',
+      'cp.__gcl_aw':  'Google Ads Search click id, __ misspelling',
       'cp.__gcl_gs':  'Google Ads click info — non-standard __ cookie',
       'cp.g_state':  'Google One Tap state',
       // Google sets this one and does not document it. What can be said without
       // guessing: it appears on EEA traffic alongside consent-mode hits and is
       // read by Google's ad tags, so it belongs with the rest of them here.
       'cp.__eoi':    'Google ad cookie — EEA traffic, undocumented',
-      'qp._gl':      'Google cross-domain linker — carries ids between domains'
+      'qp._gl':      'Google cross-domain linker — ids across domains'
     }},
     // ─────────────────────────────────────────────────────────────────────────
     // SCOPED GROUP. These are Reddit's own pixel parameters as they appear on the
@@ -550,10 +550,10 @@
         'rqm':  'Transport the pixel chose (GET / POST)',
         'cd[*': 'Custom data — value, currency, content_ids …',
         'ud[*': 'Advanced matching — hashed em, ph, fn, id …',
-        'cud[*': 'Censored format of the raw ud value (# digit, * a-z, ^ A-Z)',
-        'ncud[*': 'Censored format of the ud value after normalisation',
-        'aud[*': 'Advanced matching, alternate-normalisation copy (hashed)',
-        'cs_est': 'Fired by Meta Event Setup Tool (codeless), not a tag',
+        'cud[*': 'Censored raw ud value (# digit, * a-z, ^ A-Z)',
+        'ncud[*': 'Censored ud value, after normalisation',
+        'aud[*': 'Advanced matching — alternate-normalised copy',
+        'cs_est': 'Fired by Meta Event Setup Tool, not by a tag',
         'a':    'Agent that fired it (tmtealium = Tealium)',
         'cdl':  'Cookie-deprecation label; API_unavailable = none',
         'ler':  'Last external referrer',
@@ -596,15 +596,15 @@
         'website_context.location':   'Page URL the event happened on',
         'website_context.referrer':   'Referrer of that page',
         'website_context.isInIFrame': 'Whether the page was framed',
-        'fb.advanced_matching.*':             'Advanced matching — hashed em, external_id, client hints',
+        'fb.advanced_matching.*':             'Advanced matching — hashed em, external_id …',
         'fb.alternative_advanced_matching.*': 'Advanced matching, alternate-normalisation copy',
-        'custom_data.*':            'Event parameters — value, currency, content_ids …',
+        'custom_data.*':            'Event params — value, currency, content_ids …',
         'conversion_value.value':   'Conversion value',
         'conversion_value.currency':'Currency of the conversion value',
         'fb.search_string':         'Search term, on Search events',
         'fb.dynamic_product_ads.content_ids':  'Listing ids for dynamic ads',
         'fb.dynamic_product_ads.content_type': 'Dynamic ads content type',
-        'smart_setup.*': 'What Meta auto-detected from the page, not from a tag'
+        'smart_setup.*': 'Auto-detected by Meta from the page, not a tag'
       }},
     { name: 'Awin conversion (on the wire)', id: 'awin_wire', scope: { endpoint: ['awin'] },
       keys: [
@@ -835,21 +835,21 @@
         'url':          'Page URL that triggered the hit',
         'advertiserId': 'Addrevenue advertiser id',
         'channelId':    'Addrevenue channel (affiliate/publisher) id',
-        'clickId':      'Addrevenue click id — ties the conversion back to the click',
+        'clickId':      'Addrevenue click id — ties conversion to click',
         'version':      'Addrevenue tracking script version',
-        'fromTrackJs':  'Sent client-side by track.js, not server-to-server',
-        'market':          'Addrevenue market the advertiser is configured for',
-        'clickRef':        'Publisher click reference, passed back on the conversion',
+        'fromTrackJs':  'Sent client-side by track.js, not server-side',
+        'market':          'Addrevenue market the advertiser is set to',
+        'clickRef':        'Publisher click reference, returned on the sale',
         'affiliateGclid':  'gclid captured on the affiliate click',
         'affiliateUtmSource': 'utm_source captured on the affiliate click',
-        'wctid':           'Awin click id carried into the Addrevenue conversion',
+        'wctid':           'Awin click id carried into the conversion',
         'gclid':           'Google Ads click id on the landing URL',
         'gbraid':          'Google Ads click id, app-to-web',
         'wbraid':          'Google Ads click id, web-to-app',
-        'discountCodes':   'Discount codes used — Addrevenue resolves a channel from them',
-        'crossDeviceId':   'Cross-device id — the other way a channel is resolved',
+        'discountCodes':   'Discount codes used — Addrevenue maps a channel',
+        'crossDeviceId':   'Cross-device id — the other way to a channel',
         'shopifyEvent':    'Raw Shopify event, only on Shopify integrations',
-        'code':            'Discount code being looked up (getChannelByDiscountCodes)'
+        'code':            'Discount code being looked up'
       }},
     // Thribee (Lifull Connect — the group behind Trovit, Mitula and Nestoria).
     // Named for the brand you buy from, but everything on the wire still says
@@ -872,24 +872,24 @@
         // a pageview, it arrives named rather than as six uncatalogued keys.
         'ref', 'ttl', 'sr', 'vp', 'ul', 'de'
       ], labels: {
-        'cod':   'Always conversion_tracking — the only endpoint mode',
+        'cod':   'Always conversion_tracking — the only mode',
         '_c':    'Country code from ta(init) — uk on rentaroof',
-        '_v':    'Second ta(init) argument; 1 in every Thribee example',
+        '_v':    'Second ta(init) argument; always 1 so far',
         'sid':   'Thribee account id — the hash from ta(init)',
-        '_dc':   'true = arrived from a referrer outside this domain',
-        '_sr':   'Attributed source — referrer domain | utm_source from __utmz',
+        '_dc':   'true = came from a referrer off this domain',
+        '_sr':   'Attributed source — referrer host | utm_source',
         '_t':    'Conversion type (lead, viewPhone, register, …)',
         '_sv':   'Thribee library version (js-1.2.0)',
         '_z':    'Cache-buster timestamp (epoch ms)',
-        'lbl':   'Label — the type again, plus | customType on custom',
+        'lbl':   'Label — the type, plus | customType on custom',
         'url':   'Page URL the conversion happened on',
         'sadid': 'Listing id, from the adId option on ta(send)',
-        'ref':   'Referrer (pageview only — never actually sent, see keys)',
+        'ref':   'Referrer — pageview only, never actually sent',
         'ttl':   'Page title (pageview only — never actually sent)',
-        'sr':    'Screen size WxH (pageview only — never actually sent)',
-        'vp':    'Viewport size WxH (pageview only — never actually sent)',
-        'ul':    'Browser language (pageview only — never actually sent)',
-        'de':    'Document charset (pageview only — never actually sent)'
+        'sr':    'Screen size WxH — pageview only, never sent',
+        'vp':    'Viewport size WxH — pageview only, never sent',
+        'ul':    'Browser language — pageview only, never sent',
+        'de':    'Document charset — pageview only, never sent'
       }},
     { name: 'GA4 (on the wire)', id: 'ga4_wire', scope: { endpoint: ['ga4'] },
       keys: [
@@ -2161,6 +2161,11 @@
   // so in practice nothing is cut. Anything longer is clipped for display ONLY;
   // exports always carry the full value.
   var COL_VALUE = 58;
+  // Hard ceiling on every label in the CATALOGUE above. A label longer than this
+  // is cut mid-word with an ellipsis, which is worse than a shorter label that
+  // finishes its thought — the whole point of the column is to be readable at a
+  // glance. Keep new labels at 48 characters or fewer; run
+  // __capLabelAudit() in the console to list any that are not.
   var COL_LABEL = 48;
   // Pad to width, or cut with an ellipsis when too long.
   function fit(s, n) {
@@ -4856,6 +4861,33 @@
     console.log('%c[CAP] %c' + out.length + ' parameters across ' + gs.length + ' group' +
       (gs.length === 1 ? '' : 's') + '.  __capLabels(true) puts these back on every row.',
       'background:#8d6e63;color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold', 'color:#999');
+    return out;
+  };
+  // Lists every catalogue label that will not fit the console's label column, so
+  // an over-long one is caught here rather than by noticing a cut-off word on a
+  // live capture. Returns [] when the catalogue is clean.
+  window.__capLabelAudit = function () {
+    var out = [];
+    groups().forEach(function (g) {
+      if (!g.labels) return;
+      Object.keys(g.labels).forEach(function (k) {
+        var v = String(g.labels[k] == null ? '' : g.labels[k]);
+        if (v.length > COL_LABEL) {
+          out.push({ group: g.id || '(unscoped)', parameter: k, length: v.length, label: v });
+        }
+      });
+    });
+    if (!out.length) {
+      console.log('%c[CAP] %cevery label fits ' + COL_LABEL + ' characters.',
+        'background:#2e7d32;color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold',
+        'color:#999');
+    } else {
+      console.log('%c[CAP] %c' + out.length + ' label' + (out.length === 1 ? '' : 's') +
+        ' longer than ' + COL_LABEL + ' characters — each is cut with an ellipsis.',
+        'background:#e53935;color:#fff;padding:1px 6px;border-radius:3px;font-weight:bold',
+        'color:#999');
+      console.table(out);
+    }
     return out;
   };
   // __capLabels()      -> current state
