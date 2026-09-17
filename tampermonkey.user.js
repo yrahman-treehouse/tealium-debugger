@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      9.0
+// @version      9.1
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -480,6 +480,23 @@
         // Tealium as the thing that fired the pixel, which is how you tell a
         // Tealium-fired Meta hit from one hardcoded in the page.
         'a', 'cdl', 'ler', 'plt', 'tz',
+        // Advanced-matching siblings of ud[*, seen on live hits once the pixel
+        // had an email to match on. Sourced from fbevents.js itself (module
+        // signalsFBEventsUserDataParams and the params class that appends
+        // "nc"+key), not from a blog: 'cud' is censoredUserDataFormat, 'ncud'
+        // is the normalised variant behind the send_normalized_ud_format
+        // guardrail, 'aud' is alternateUserData. The censor maps digits to #,
+        // lower-case to *, upper-case to ^, anything else to ~ — so a cud[em]
+        // of 64 #/* characters means Tealium handed the pixel an email that
+        // was ALREADY SHA-256 hashed. The mask is Meta's, not this script's
+        // redaction. Same source also emits cudff/udff/audff (form-field
+        // automatic matching), udwv, udai and ped; not catalogued until seen.
+        'cud[*', 'ncud[*', 'aud[*',
+        // Set by Meta's Event Setup Tool rule engine (read back as cs_est /
+        // est_source in openbridge3.js). A hit carrying it was created by the
+        // codeless EST, not by a Tealium tag — the thing to check when Meta
+        // shows an event nobody configured.
+        'cs_est',
         // ── UNLABELLED ON PURPOSE ────────────────────────────────────────
         // Researched, not guessed. These, and the equivalents in the UET, Google
         // Ads, GA4 and GTM groups below, are absent from every primary source:
@@ -521,6 +538,10 @@
         'rqm':  'Transport the pixel chose (GET / POST)',
         'cd[*': 'Custom data — value, currency, content_ids …',
         'ud[*': 'Advanced matching — hashed em, ph, fn, id …',
+        'cud[*': 'Censored format of the raw ud value (# digit, * a-z, ^ A-Z)',
+        'ncud[*': 'Censored format of the ud value after normalisation',
+        'aud[*': 'Advanced matching, alternate-normalisation copy (hashed)',
+        'cs_est': 'Fired by Meta Event Setup Tool (codeless), not a tag',
         'a':    'Agent that fired it (tmtealium = Tealium)',
         'cdl':  'Cookie-deprecation label; API_unavailable = none',
         'ler':  'Last external referrer',
@@ -1449,6 +1470,13 @@
     'addrevenue_wire:gbraid', 'addrevenue_wire:wbraid',
     'addrevenue_wire:discountCodes', 'addrevenue_wire:crossDeviceId',
     'addrevenue_wire:shopifyEvent', 'addrevenue_wire:code'
+  ] });
+  // 9.1 names four Meta parameters a live capture was still reporting as
+  // Uncatalogued: the three advanced-matching siblings of ud[* and the Event
+  // Setup Tool marker. All four were visible before they had a name, so all
+  // four are ticked — otherwise cataloguing them is the thing that hides them.
+  MIGRATIONS.push({ v: '9.1', keys: [
+    'fb_wire:cud[*', 'fb_wire:ncud[*', 'fb_wire:aud[*', 'fb_wire:cs_est'
   ] });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
