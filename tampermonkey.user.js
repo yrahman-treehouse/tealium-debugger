@@ -1794,6 +1794,29 @@
   // rows before this release, so their keys must be ticked or naming them is
   // what makes them disappear. The Meta CAPI Gateway was visible the same way,
   // and its every key is ticked for the same reason.
+  // 9.6 adds OpenAI's pixel. The events endpoint was visible as a discovery row
+  // before this release, so every key is ticked — naming a parameter must never
+  // be the thing that hides it.
+  MIGRATIONS.push({ v: '9.6', keys: [
+    'openai_wire:pid', 'openai_wire:st', 'openai_wire:sv', 'openai_wire:t',
+    'openai_wire:ec', 'openai_wire:obref', 'openai_wire:oppref',
+    'openai_wire:type', 'openai_wire:custom_event_name', 'openai_wire:timestamp_ms',
+    'openai_wire:id', 'openai_wire:source_url', 'openai_wire:referrer_url',
+    'openai_wire:opt_out', 'openai_wire:data.type', 'openai_wire:data.amount',
+    'openai_wire:data.currency', 'openai_wire:data.plan_id',
+    'openai_wire:data.contents',
+    'openai_wire:user.in.*', 'openai_wire:user.fm.*', 'openai_wire:user.ht.*',
+    'openai_wire:user.js.*',
+    'openai_wire:data.schema_version', 'openai_wire:data.consent',
+    'openai_wire:data.config.automatic_advanced_matching',
+    'openai_wire:data.dropped_event_count', 'openai_wire:data.dropped_event_details',
+    'openai_wire:data.dropped_event_reason_counts.*',
+    'openai_wire:data.dropped_event_name_counts.*',
+    'openai_wire:data.dropped_event_phase_counts.*',
+    'openai_wire:data.is_first_visit_in_session',
+    'openai_wire:data.is_first_consent_grant_in_session',
+    'openai_wire:events'
+  ] });
   MIGRATIONS.push({ v: '9.3', keys: [
     'rdt_wire:aaid', 'rdt_wire:idfa', 'rdt_wire:partner_version', 'rdt_wire:drfr',
     'rdt_wire:dpm', 'rdt_wire:dpcc', 'rdt_wire:dprc', 'rdt_wire:mthd', 'rdt_wire:pm',
