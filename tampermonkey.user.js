@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      9.5
-// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
+// @version      9.6
+// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
 // @match        *://*.huurwoningen.com/*
@@ -615,6 +615,94 @@
         'fb.dynamic_product_ads.content_ids':  'Listing ids for dynamic ads',
         'fb.dynamic_product_ads.content_type': 'Dynamic ads content type',
         'smart_setup.*': 'Auto-detected by Meta from the page, not a tag'
+      }},
+    // OpenAI's advertising pixel, oaiq. Loaded as bzrcdn.openai.com/sdk/oaiq.min.js
+    // and posting batches to bzr.openai.com/v1/sdk/events.
+    //
+    // Unlike every other vendor here it does NOT send one request per event. It
+    // queues events and flushes a JSON envelope holding several at once, so the
+    // 'ec' query parameter says how many are inside. The capture splits that
+    // envelope into one row per event — see eventsFromJSON — which is why the
+    // keys below are a single event's, not an array's.
+    //
+    // Every key is taken from the SDK's own source, so the ones never yet seen
+    // firing are named on the same footing as the ones that were.
+    //
+    // The event names the SDK will send, from its own table: appointment_scheduled,
+    // checkout_started, contents_viewed, custom, items_added, lead_created,
+    // order_created, page_viewed, registration_completed, subscription_created,
+    // trial_started. Two more are internal — openai::sdk_init when the SDK starts
+    // and oai::diagnostic, which reports on the SDK rather than on the visitor.
+    //
+    // 'user' is advanced matching, bucketed by WHERE the SDK got each value:
+    //   in  you passed it in yourself when initialising the pixel
+    //   fm  it was scraped out of a form field on the page
+    //   ht  it was scraped out of the page HTML
+    //   js  it was read from a JavaScript variable
+    // Inside a bucket the wire keys are em, ph, eid, fn, ln, co, ct, rg and pc,
+    // all SHA-256. The three scraped buckets only fill when automatic advanced
+    // matching is on, which 'data.config.automatic_advanced_matching' reports —
+    // so those are the keys to look at when you need to know what the pixel took
+    // off a page without being asked.
+    { name: 'OpenAI pixel (on the wire)', id: 'openai_wire', scope: { endpoint: ['openai'] },
+      keys: [
+        // Query string.
+        'pid', 'st', 'sv', 't', 'ec',
+        // Envelope, inherited by every event split out of the batch.
+        'obref', 'oppref',
+        // One event.
+        'type', 'custom_event_name', 'timestamp_ms', 'id', 'source_url',
+        'referrer_url', 'opt_out',
+        // Event payload. Which of these is present depends on data.type:
+        // contents and plan_enrollment carry 'contents', plan_enrollment and
+        // custom carry 'plan_id', customer_action carries neither.
+        'data.type', 'data.amount', 'data.currency', 'data.plan_id',
+        'data.contents',
+        // Advanced matching.
+        'user.in.*', 'user.fm.*', 'user.ht.*', 'user.js.*',
+        // The oai::diagnostic event, which measures the SDK and not the visitor.
+        'data.schema_version', 'data.consent',
+        'data.config.automatic_advanced_matching', 'data.dropped_event_count',
+        'data.dropped_event_details', 'data.dropped_event_reason_counts.*',
+        'data.dropped_event_name_counts.*', 'data.dropped_event_phase_counts.*',
+        'data.is_first_visit_in_session', 'data.is_first_consent_grant_in_session',
+        // Only appears if an envelope ever reaches the row unsplit.
+        'events'
+      ], labels: {
+        'pid':               'OpenAI pixel id',
+        'st':                'SDK type — oaiq-web is the browser SDK',
+        'sv':                'OpenAI SDK version',
+        't':                 'Request timestamp (epoch ms)',
+        'ec':                'Events batched into this one request',
+        'obref':             'OpenAI browser id (the __obref value)',
+        'oppref':            'OpenAI click id (the __oppref value)',
+        'type':              'Event name (page_viewed, order_created …)',
+        'custom_event_name': 'Your own name, only when type is custom',
+        'timestamp_ms':      'When the event happened (epoch ms)',
+        'id':                'Event id — dedupes against the server API',
+        'source_url':        'Page URL the event happened on',
+        'referrer_url':      'Referrer of that page',
+        'opt_out':           'Opt-out flag set on the event',
+        'data.type':         'Payload shape — contents, customer_action …',
+        'data.amount':       'Event value',
+        'data.currency':     'Currency of amount (3-letter code)',
+        'data.plan_id':      'Plan id, on subscription and trial events',
+        'data.contents':     'Items — id, name, content_type, quantity …',
+        'user.in.*':         'Advanced matching you supplied yourself',
+        'user.fm.*':         'Advanced matching scraped from a form field',
+        'user.ht.*':         'Advanced matching scraped from the HTML',
+        'user.js.*':         'Advanced matching read from a JS variable',
+        'data.schema_version': 'Diagnostic schema version',
+        'data.consent':        'The consent state the SDK acted on',
+        'data.config.automatic_advanced_matching': 'Is the SDK harvesting fields by itself',
+        'data.dropped_event_count':   'Events the SDK refused to send',
+        'data.dropped_event_details': 'Why — reason, code, field, count',
+        'data.dropped_event_reason_counts.*': 'Dropped-event tally by reason',
+        'data.dropped_event_name_counts.*':   'Dropped-event tally by event name',
+        'data.dropped_event_phase_counts.*':  'Dropped-event tally by phase',
+        'data.is_first_visit_in_session':        'First event of a new session',
+        'data.is_first_consent_grant_in_session': 'Consent was granted this session',
+        'events':            'Unsplit event batch — see the group note'
       }},
     { name: 'Awin conversion (on the wire)', id: 'awin_wire', scope: { endpoint: ['awin'] },
       keys: [
@@ -1259,6 +1347,15 @@
     { id: 'fb_capi', kind: 'vendor', vendor: 'Meta CAPI Gateway (fallback)',
       eventKey: ['event_name'],
       host: /\.run\.app$/i, test: /\/events\?(?:[^#]*&)?cee=/i },
+    // OpenAI's advertising pixel. The events endpoint batches, so one row here
+    // is one request holding 'ec' events, split into a row each by the capture.
+    { id: 'openai', kind: 'vendor', vendor: 'OpenAI pixel', eventKey: ['type'],
+      host: /(^|\.)openai\.com$/i, test: /\/v1\/sdk\/events(\?|$)/i },
+    // The per-pixel config the SDK fetches before it sends anything. It decides
+    // whether automatic advanced matching is on, so it is worth a row of its own
+    // even though it measures nothing: it is the switch, not the hit.
+    { id: 'openai', kind: 'vendor', vendor: 'OpenAI pixel (config)',
+      host: /(^|\.)openai\.com$/i, test: /\/pixel-config\/v1\//i },
     // Thribee's conversion pixel — a bare new Image() to rd.clk.thribee.com,
     // which the HTMLImageElement.src hook below catches.
     //
@@ -1323,6 +1420,10 @@
     // other half, distinct enough that a server-side leg never reads as a
     // browser one while you scroll.
     'fb_capi': { tag: 'META S2S', colour: '#0a3d91' },
+    // OpenAI's brand green. Close to UET's teal, which is a real cost — they are
+    // told apart by the tag text rather than at a glance. Kept anyway, because a
+    // made-up colour for a vendor that HAS one is the worse trade.
+    'openai': { tag: 'OPENAI', colour: '#10a37f' },
     // Lifull Connect's magenta, approximate. Distinct from Awin's pink by being
     // lighter and from Meta's blue by being nowhere near it.
     'thribee': { tag: 'THRIBEE', colour: '#c2185b' },
@@ -3364,6 +3465,31 @@
       if (!o || typeof o !== 'object') return;
       var d = {};
       Object.keys(inherited || {}).forEach(function (k) { d[k] = inherited[k]; });
+      // A vendor envelope that batches its events in a TOP-LEVEL 'events' array.
+      // OpenAI's pixel posts {obref, oppref, events:[…], user:{…}} and would
+      // otherwise land as a single row whose 'events' key holds the whole array
+      // as one value — every event name, id and amount inside it invisible to
+      // the picker, the filters and the exports alike.
+      //
+      // Guarded on there being no 'data' envelope so the Tealium shape below,
+      // {data:{events:[…]}}, keeps its own handling. Each event is merged ONTO
+      // the envelope and flattened with its own 'data' left nested, deliberately:
+      // an OpenAI event carries both a 'type' (page_viewed) and a 'data.type'
+      // (contents) and hoisting would let the second overwrite the first.
+      if (Array.isArray(o.events) && o.events.length &&
+          !(o.data && typeof o.data === 'object')) {
+        var env0 = {};
+        Object.keys(d).forEach(function (k) { env0[k] = d[k]; });
+        Object.keys(o).forEach(function (k) { if (k !== 'events') env0[k] = o[k]; });
+        o.events.forEach(function (ev) {
+          if (!ev || typeof ev !== 'object' || Array.isArray(ev)) return;
+          var r = {};
+          Object.keys(env0).forEach(function (k) { r[k] = env0[k]; });
+          Object.keys(ev).forEach(function (k) { r[k] = ev[k]; });
+          list.push(flatten(r, '', {}, 0));
+        });
+        return;
+      }
       if (o.data && typeof o.data === 'object') {
         var env = {};
         Object.keys(d).forEach(function (k) { env[k] = d[k]; });
