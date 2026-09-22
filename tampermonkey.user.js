@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      9.6
+// @version      9.7
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -1355,6 +1355,7 @@
     // whether automatic advanced matching is on, so it is worth a row of its own
     // even though it measures nothing: it is the switch, not the hit.
     { id: 'openai', kind: 'vendor', vendor: 'OpenAI pixel (config)',
+      eventName: '(pixel config)',
       host: /(^|\.)openai\.com$/i, test: /\/pixel-config\/v1\//i },
     // Thribee's conversion pixel — a bare new Image() to rd.clk.thribee.com,
     // which the HTMLImageElement.src hook below catches.
@@ -2850,6 +2851,10 @@
   var scriptOwner = {};
   function noteScript(src) {
     try {
+      // A new script is going in, so a lookup that found nothing a moment ago
+      // might find something now. Cheaper than never caching, and correct:
+      // the only way the DOM gains a stamped script is through here.
+      domOwnerCache = {};
       var abs = absUrl(src);
       if (!abs || abs.indexOf('http') !== 0) return;
       var own = containerOfUrl(abs);
@@ -2860,6 +2865,38 @@
         if (c) { scriptOwner[abs] = c; return; }   // transitive: piggybacked libraries
       }
     } catch (e) {}
+  }
+  // Tealium's tag loader stamps the <script> element it injects with the tag's
+  // own id — utag.ut.loader({type:'script', src:…, id:'utag_55'}) becomes
+  // <script id="utag_55" src="…">. That survives in the DOM, which makes it
+  // readable long after the load, and it names the TAG rather than just the
+  // container: 'utag.55' is the thing you go and open in Tealium.
+  //
+  // Why this exists when scriptOwner already does the same job: scriptOwner is
+  // learned by watching the src setter as the script is injected, so it depends
+  // on the wrapper being installed before the injection and on the injector
+  // using .src rather than setAttribute. This needs neither — it reads the
+  // finished DOM — so it recovers ownership the hook can miss.
+  //
+  // Only tags whose template passes an id are found. That is not every tag, so
+  // this ADDS attributions and never replaces one: a miss here leaves the row
+  // exactly as it was.
+  var domOwnerCache = {};
+  function domScriptOwner(url) {
+    if (!url) return null;
+    if (hasOwn(domOwnerCache, url)) return domOwnerCache[url];
+    var found = null;
+    try {
+      var els = document.getElementsByTagName('script');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i], id = el.id || '';
+        if (!id || el.src !== url) continue;
+        var m = /^utag_([A-Za-z0-9_.-]+)$/.exec(id);
+        if (m) { found = { container: 'tealium', tag: 'utag.' + m[1] }; break; }
+      }
+    } catch (e) {}
+    domOwnerCache[url] = found;
+    return found;
   }
   function shortScript(u) {
     try {
@@ -2888,6 +2925,13 @@
       if (own) return { origin: own + ':direct', container: own, script: frames[i] };
       own = scriptOwner[frames[i]];
       if (own) return { origin: own + ':via', container: own, script: frames[i] };
+      // Nothing watched this script being injected, but the element it was
+      // injected as may still be in the DOM carrying its loader's id.
+      var dom = domScriptOwner(frames[i]);
+      if (dom) {
+        return { origin: dom.container + ':script-id', container: dom.container,
+                 script: frames[i], tag: dom.tag };
+      }
     }
     // Inside a utag call the stack may be entirely inline page code, but we know
     // where we are: the wrapper set activeUdo before calling through.
@@ -3099,6 +3143,7 @@
       declared: declared
     };
     if (att.dispatcher) out.dispatcher = att.dispatcher;
+    if (att.tag) out.tag = att.tag;
     if (cmd) { out.command = cmd.cmd + (cmd.name ? ' ' + cmd.name : ''); out.cmd_seq = cmd.seq; }
     // Full URL of the frame that made the request, for the fan-out grouping:
     // the 1p-user-list images are written by the viewthroughconversion script,
@@ -3114,6 +3159,8 @@
       out.basis = 'from the gtag command that caused it';
     } else if (byDevId) {
       out.basis = 'Tealium developer id in the payload; stack named only the Google library';
+    } else if (att.container && /:script-id$/.test(att.origin)) {
+      out.basis = 'the script was injected as ' + (att.tag || 'a container tag');
     } else if (att.container) {
       out.basis = 'from the call stack';
     } else if (declared) {
@@ -3717,6 +3764,11 @@
       var v = d[keys[i]];
       if (v !== undefined && v !== null && v !== '') return asText(v);
     }
+    // An endpoint that carries no event parameter at all — a config or lookup
+    // fetch — can still say what it is. Without this the row prints its endpoint
+    // id and then nothing, which reads like an event whose name went missing
+    // rather than like a request that never had one.
+    if (info.endpoint.eventName) return info.endpoint.eventName;
     var m = /\/pagead\/(?:1p-)?(?:viewthrough)?(?:conversion|user-list)\/([^\/?]+)/i.exec(info.path || '');
     return m ? m[1] : '';
   }
