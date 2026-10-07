@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      9.7
-// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
+// @version      9.8
+// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
 // @match        *://*.huurwoningen.com/*
@@ -704,6 +704,328 @@
         'data.is_first_consent_grant_in_session': 'Consent was granted this session',
         'events':            'Unsplit event batch — see the group note'
       }},
+    // Snapchat's pixel, scevent.min.js, posting to tr.snapchat.com/p.
+    //
+    // Like OpenAI's it batches. One POST is {ctx:{…}, req:[…], u_scsid}: 'ctx' is
+    // the page and browser, said once, and 'req' is a queue of items flushed
+    // together. The capture splits req into a row per item with ctx inherited,
+    // so the keys below are one item's plus the envelope's. Each item is ONE of:
+    //   t    a pixel event — what snaptr('track', …) sent. Its fields are hoisted
+    //        to the top level, so the event name is 'ev', not 't.ev'.
+    //   pc   automatic advanced matching: emails and phone numbers the SDK
+    //        hashed straight out of a form on the page, without being asked
+    //   md   page metadata — button text on a click, the page's JSON-LD and
+    //        Open Graph tags, whether the tab is visible
+    //   log  an error the SDK reports about itself
+    //   i    an empty ping, sent to tr6.snapchat.com, that exists to learn the
+    //        visitor's IPv6 address. It is the whole reason that host appears.
+    //
+    // Every key is from the SDK source. Its parameter table maps the names you
+    // pass in (price, currency, user_email …) onto the short wire names below,
+    // and hashes the personal ones before they leave — u_hem is the SHA-256 of
+    // what came in as user_email. A hashed value that starts with FFF is one the
+    // SDK judged invalid (a malformed email, an age outside 1-129) and sent anyway.
+    //
+    // Event names, from the same table: PAGE_VIEW, SIGN_UP, VIEW_CONTENT,
+    // ADD_CART, START_CHECKOUT, PURCHASE, SEARCH, SUBSCRIBE, LIST_VIEW, LOGIN,
+    // SAVE, SHARE, START_TRIAL, CUSTOM_EVENT_1 to _5 and a dozen more app ones.
+    { name: 'Snapchat pixel (on the wire)', id: 'snap_wire', scope: { endpoint: ['snap'] },
+      keys: [
+        // One event.
+        'ev', 'pid', 'intg', 'cdid', 't', 'ae', 'del',
+        'e_cur', 'e_pr', 'e_iids', 'e_ic', 'e_ni', 'e_tid', 'e_sm', 'e_ss', 'e_su',
+        'e_desc', 'e_cs', 'e_dm', 'e_pia', 'e_lv', 'e_bds', 'br_id', 'et', 'du',
+        // Identity. The cookies first, then advanced matching.
+        'u_c1', 'u_sclid', 'u_scsid',
+        'u_hem', 'u_hpn', 'u_hed', 'u_hmai', 'u_fn', 'u_ln', 'u_age', 'u_gd',
+        'u_puid', 'u_ppid', 'u_pnid', 'ex_id', 'l_id', 'l_*', 'an_k', 'an_v',
+        // Google tags the SDK found on the page — see the labels.
+        'gat', 'gau', 'gac',
+        // The other item kinds.
+        'pc.u_hems', 'pc.u_hpns', 'pc.av', 'pc.*',
+        'md.btx', 'md.btc', 'md.btff', 'md.psc', 'md.md', 'md.*',
+        'log.name', 'log.message', 'log.*', 'i.pids',
+        // Envelope, inherited by every item split out of the batch.
+        'ctx.c1', 'ctx.ls', 'ctx.ss', 'ctx.sr', 'ctx.srs',
+        'ctx.url', 'ctx.rf', 'ctx.ua', 'ctx.v', 'ctx.bt', 'ctx.t', 'ctx.pv',
+        'ctx.sh', 'ctx.sw', 'ctx.mtp', 'ctx.bg', 'ctx.df', 'ctx.if', 'ctx.p',
+        'ctx.ts', 'ctx.sps', 'ctx.d_*', 'ctx.huah', 'ctx.*',
+        // Only appears if the batch reaches the row empty or unsplit.
+        'req'
+      ], labels: {
+        'ev':        'Snap event name (PAGE_VIEW, SIGN_UP …)',
+        'pid':       'Snap pixel id',
+        'intg':      'Integration that sent it, when not the SDK',
+        'cdid':      'Event id — dedupes against the CAPI',
+        't':         'Test event flag',
+        'ae':        'Auto event, not one a tag tracked',
+        'del':       'Delay between queueing and sending (ms)',
+        'e_cur':     'Currency (3-letter code)',
+        'e_pr':      'Price / value',
+        'e_iids':    'Item ids',
+        'e_ic':      'Item category',
+        'e_ni':      'Number of items',
+        'e_tid':     'Transaction id',
+        'e_sm':      'Sign-up method',
+        'e_ss':      'Search string',
+        'e_su':      'Success flag',
+        'e_desc':    'Description',
+        'e_cs':      'Customer status',
+        'e_dm':      'Delivery method',
+        'e_pia':     'Payment info available',
+        'e_lv':      'Level',
+        'e_bds':     'Brands',
+        'br_id':     'Brand id',
+        'et':        'Event tag',
+        'du':        'Data use restriction',
+        'u_c1':      'Snap browser id (_scid cookie)',
+        'u_sclid':   'Snap click id (ScCid, from the ad click)',
+        'u_scsid':   'Snap session id',
+        'u_hem':     'Hashed email — advanced matching',
+        'u_hpn':     'Hashed phone — advanced matching',
+        'u_hed':     'Hashed email domain',
+        'u_hmai':    'Hashed mobile ad id',
+        'u_fn':      'Hashed first name',
+        'u_ln':      'Hashed last name',
+        'u_age':     'Hashed age',
+        'u_gd':      'Gender',
+        'u_puid':    'Partner user id',
+        'u_ppid':    'Partner-provided id',
+        'u_pnid':    'Partner id',
+        'ex_id':     'Your own user id — external_id',
+        'l_id':      'Lead id',
+        'l_*':       'Location — city, region, postcode, country',
+        'an_k':      'Which matching keys were supplied',
+        'an_v':      'Wire names those keys became',
+        'gat':       'Google tag ids found on the page',
+        'gau':       'Google tag is configured with a user_id',
+        'pc.u_hems': 'Emails hashed from a page form, unasked',
+        'pc.u_hpns': 'Phones hashed from a page form, unasked',
+        'pc.av':     'Which form-scraping method found them',
+        'pc.*':      'Automatic advanced matching bookkeeping',
+        'md.btx':    'Text of the button that was clicked',
+        'md.btc':    'Classes of the button that was clicked',
+        'md.btff':   'Form fields around that button',
+        'md.psc':    'Tab visibility — 1 visible, 2 hidden',
+        'md.md':     'Page metadata — JSON-LD, Open Graph …',
+        'md.*':      'Other page metadata',
+        'log.name':  'SDK error code',
+        'log.message': 'SDK error message',
+        'log.*':     'SDK error report detail',
+        'i.pids':    'IPv6 ping — exists to learn your IPv6',
+        'ctx.c1':    'Snap browser id (_scid cookie)',
+        'ctx.ls':    'Snap click id (ScCid)',
+        'ctx.ss':    'Snap session id',
+        'ctx.sr':    'Snap server reference id',
+        'ctx.srs':   'Where that reference id came from',
+        'ctx.url':   'Page URL',
+        'ctx.rf':    'Referrer',
+        'ctx.ua':    'User agent',
+        'ctx.v':     'Snap SDK version',
+        'ctx.bt':    'Snap SDK build',
+        'ctx.t':     'Test mode',
+        'ctx.sh':    'Screen height',
+        'ctx.sw':    'Screen width',
+        'ctx.mtp':   'Touch points — 0 on a desktop',
+        'ctx.bg':    'Tab was in the background',
+        'ctx.df':    'Document had focus',
+        'ctx.if':    'Page is inside an iframe',
+        'ctx.p':     'Page timings — load, DCL, first paint …',
+        'ctx.ts':    'Client timestamp (epoch ms)',
+        'ctx.sps':   'Time since the page started (ms)',
+        'ctx.d_*':   'Device from client hints — OS, model …',
+        'ctx.huah':  'High-entropy client hints were readable',
+        'ctx.*':     'Other page and browser context',
+        'req':       'Event batch — empty when nothing queued'
+      }},
+    // TikTok's pixel, posting JSON to analytics.tiktok.com/api/v2/…. One request
+    // is one event, no batching, so the body flattens straight onto these keys.
+    //
+    // Four endpoints share this group because they share the envelope:
+    //   /pixel        the events a tag tracked — ttq.track('ViewContent', …) —
+    //                 named in 'event'
+    //   /pixel/act    events the SDK collected BY ITSELF, named in 'action' with
+    //                 the trigger in auto_collected_properties.page_trigger. The
+    //                 page's Open Graph tags ride along on these.
+    //   /pixel/inter  engagement: clicks, scrolls and time on page, on leaving
+    //   /pixel/perf   web-vitals timings
+    // The last three are TikTok measuring the page on its own initiative. Turning
+    // off automatic event collection in TikTok Events Manager is what stops them;
+    // nothing in a Tealium tag does.
+    //
+    // 'signal_diagnostic_labels' is TikTok grading the identity it received: for
+    // each of email and phone, raw or hashed, typed in or auto-detected, a label
+    // saying whether it was there and whether it was valid. It is a report ON the
+    // matching data, not the data — no address is in it.
+    //
+    // TikTok's automatic advanced matching reads form fields, page text AND, per
+    // its own help centre, 'key website variables (e.g., window.dataLayer,
+    // window.utag)'. On a Tealium site that means the UDO is a matching source,
+    // so an email in utag_data can reach context.user hashed without any tag
+    // mapping it there.
+    { name: 'TikTok pixel (on the wire)', id: 'tiktok_wire', scope: { endpoint: ['tiktok'] },
+      keys: [
+        'event', 'action', 'trigger_event', 'event_id', 'message_id', 'is_onsite',
+        'timestamp', 'partner', 'limited_data_use',
+        // Event parameters, as passed to ttq.track().
+        'properties.value', 'properties.currency', 'properties.content_id',
+        'properties.content_type', 'properties.content_name', 'properties.contents',
+        'properties.query', 'properties.*',
+        // Identity.
+        'context.user.anonymous_id', 'context.user.external_id',
+        'context.user.sha256_email', 'context.user.sha256_phone_number',
+        'context.user.*', 'context.ad.*',
+        // Which pixel, which page, which session.
+        'context.pixel.code', 'context.pixel.codes', 'context.pixel.runtime',
+        'context.pixel.*',
+        'context.page.url', 'context.page.referrer', 'context.page.load_progress',
+        'context.page.*',
+        'context.library.name', 'context.library.version',
+        'context.session_id', 'context.pageview_id', 'context.variation_id',
+        'context.index', 'context.sessions', 'context.userAgent',
+        'context.device.platform', 'context.*',
+        // What the SDK measured by itself.
+        'auto_collected_properties.page_trigger',
+        'auto_collected_properties.content_data.*',
+        'auto_collected_properties.action_event',
+        'auto_collected_properties.inter.ct', 'auto_collected_properties.inter.st',
+        'auto_collected_properties.inter.pl',
+        'auto_collected_properties.vc_properties.*',
+        'auto_collected_properties.*',
+        'signal_diagnostic_labels.*',
+        '_inspection.*'
+      ], labels: {
+        'event':            'TikTok event name (ViewContent …)',
+        'action':           'Auto-collected event name',
+        'trigger_event':    'Event this IPv6 enrich rode in on',
+        'event_id':         'Event id — dedupes against the Events API',
+        'message_id':       'Unique id of this one request',
+        'is_onsite':        'Page is a TikTok onsite page',
+        'timestamp':        'Client timestamp (ISO 8601)',
+        'partner':          'Reporting partner — Tealium, GTM …',
+        'limited_data_use': 'Limited data use requested',
+        'properties.value':        'Event value',
+        'properties.currency':     'Currency (3-letter code)',
+        'properties.content_id':   'Content / product id',
+        'properties.content_type': 'Content type — product or product_group',
+        'properties.content_name': 'Content / product name',
+        'properties.contents':     'Items — content_id, quantity, price …',
+        'properties.query':        'Search string',
+        'properties.*':            'Other event parameters',
+        'context.user.anonymous_id':  'TikTok browser id (_ttp cookie)',
+        'context.user.external_id':   'Your own user id, hashed',
+        'context.user.sha256_email':  'Hashed email — advanced matching',
+        'context.user.sha256_phone_number': 'Hashed phone — advanced matching',
+        'context.user.*':     'Other identity — supplied or auto-matched',
+        'context.ad.*':       'Ad click context — ttclid, SDK env …',
+        'context.pixel.code': 'TikTok pixel id',
+        'context.pixel.codes': 'Every pixel id on the page, | separated',
+        'context.pixel.runtime': 'Pixel runtime',
+        'context.pixel.*':    'Other pixel bookkeeping',
+        'context.page.url':   'Page URL',
+        'context.page.referrer': 'Referrer',
+        'context.page.load_progress': 'Document readyState when it fired',
+        'context.page.*':     'Other page context',
+        'context.library.name':    'TikTok SDK name',
+        'context.library.version': 'TikTok SDK version',
+        'context.session_id':   'TikTok session id',
+        'context.pageview_id':  'TikTok page view id',
+        'context.variation_id': 'SDK experiment variation',
+        'context.index':        'Page index within the session',
+        'context.sessions':     'Cookie-based session history',
+        'context.userAgent':    'User agent',
+        'context.device.platform': 'Platform',
+        'context.*':            'Other context',
+        'auto_collected_properties.page_trigger': 'What made the SDK collect this',
+        'auto_collected_properties.content_data.*': 'Page metadata — Open Graph tags …',
+        'auto_collected_properties.action_event': 'Engagement trigger — page leave …',
+        'auto_collected_properties.inter.ct': 'Clicks on the page',
+        'auto_collected_properties.inter.st': 'Scrolls on the page',
+        'auto_collected_properties.inter.pl': 'Time on page (ms)',
+        'auto_collected_properties.vc_properties.*': 'Value / currency read off the page',
+        'auto_collected_properties.*': 'Other auto-collected data',
+        'signal_diagnostic_labels.*': 'Is email / phone present and valid',
+        '_inspection.*':        'SDK self-diagnostics'
+      }},
+    // LinkedIn's Insight Tag, insight.min.js and its older build. Two endpoints,
+    // and they are not the same kind of thing.
+    //
+    // /collect is the classic pixel: an image GET with the partner id in 'pid'.
+    // On a plain page load it carries no conversion; a conversion adds
+    // conversionId and, when the tag passes them, val, cur, oid and eventId.
+    //
+    // /wa/ is 'website actions', and it is the one worth reading. It posts the
+    // page title, every page visit including SPA route changes, how long the
+    // visitor dwelt, and on a click the clicked element's text, value and the
+    // DOM path to it — automatic, whatever the tag was set up to send. The body
+    // is base64 and usually gzipped too ('fmt' says which: g, b or a for plain
+    // JSON), so the capture decodes it before reading; that is why these keys
+    // are readable at all, where the discovery survey saw a single garbled one.
+    { name: 'LinkedIn Insight (on the wire)', id: 'li_wire', scope: { endpoint: ['linkedin'] },
+      keys: [
+        // /collect.
+        'pid', 'conversionId', 'val', 'cur', 'oid', 'type', 'eventId', 'tm',
+        'li_fat_id', 'li_giant', 'li_adsId', 'pageLoadId', 'time', 'url', 'v',
+        'fmt', 'error', 'href',
+        // /wa/.
+        'medium', 'signalType', 'signalSubType', 'pids', 'pageTitle', 'domain',
+        'liFatId', 'liGiant', 'hem', 'websiteSignalRequestId', 'pageInstanceId',
+        'scriptVersion', 'isTranslated', 'isLinkedInApp', 'isFilteredByClient',
+        'dwellMs', 'pauseMs', 'dwellSegmentId',
+        'domAttributes.innerText', 'domAttributes.elementValue',
+        'domAttributes.tagName', 'domAttributes.formAction',
+        'domAttributes.isFormSubmission', 'domAttributes.*',
+        'innerElements', 'elementCrumbsTree', 'misc.*',
+        // Only if a body could not be decoded.
+        '_undecoded_body'
+      ], labels: {
+        'pid':          'LinkedIn partner id(s)',
+        'conversionId': 'Conversion id — absent on a page view',
+        'val':          'Conversion value',
+        'cur':          'Conversion currency',
+        'oid':          'Order id',
+        'type':         'Conversion type (LEAD, PURCHASE …)',
+        'eventId':      'Event id — dedupes against the CAPI',
+        'tm':           'Tag manager source',
+        'li_fat_id':    'LinkedIn click id (li_fat_id)',
+        'li_giant':     'LinkedIn li_giant id',
+        'li_adsId':     'LinkedIn first-party browser id',
+        'pageLoadId':   'Id of this page load',
+        'time':         'Client timestamp (epoch ms)',
+        'url':          'Page URL',
+        'v':            'Pixel protocol version',
+        'fmt':          'Body format — g gzip, b base64, a JSON',
+        'error':        'Tag error the Insight Tag reported',
+        'href':         'Page or link the error / click was on',
+        'medium':       'Transport — fetch, beacon or xhr',
+        'signalType':   'PAGE_VISIT or CLICK',
+        'signalSubType': 'DWELL on a time-on-page report',
+        'pids':         'LinkedIn partner id(s)',
+        'pageTitle':    'Page title',
+        'domain':       'Site domain',
+        'liFatId':      'LinkedIn click id (li_fat_id)',
+        'liGiant':      'LinkedIn li_giant id',
+        'hem':          'Hashed email — enhanced matching',
+        'websiteSignalRequestId': 'Id of this website-actions request',
+        'pageInstanceId': 'Id of this page view',
+        'scriptVersion': 'Insight Tag version',
+        'isTranslated': 'Page was machine-translated',
+        'isLinkedInApp': 'Inside the LinkedIn in-app browser',
+        'isFilteredByClient': 'Click dropped by the tag itself',
+        'dwellMs':      'Time on page in this segment (ms)',
+        'pauseMs':      'Hidden time before this segment (ms)',
+        'dwellSegmentId': 'Dwell segment number',
+        'domAttributes.innerText':    'Text of the clicked element',
+        'domAttributes.elementValue': 'Value of the clicked element',
+        'domAttributes.tagName':      'Tag of the clicked element',
+        'domAttributes.formAction':   'Action of the form it belongs to',
+        'domAttributes.isFormSubmission': 'Click submits a form',
+        'domAttributes.*':  'Other clicked-element attributes',
+        'innerElements':    'Elements inside the clicked one',
+        'elementCrumbsTree': 'DOM path to the clicked element',
+        'misc.*':           'Insight Tag internals',
+        '_undecoded_body':  'Body the capture could not decode'
+      }},
     { name: 'Awin conversion (on the wire)', id: 'awin_wire', scope: { endpoint: ['awin'] },
       keys: [
         'tt', 'tv', 'merchant', 'amount', 'cr', 'ref', 'parts', 'ch', 'vc',
@@ -1357,6 +1679,57 @@
     { id: 'openai', kind: 'vendor', vendor: 'OpenAI pixel (config)',
       eventName: '(pixel config)',
       host: /(^|\.)openai\.com$/i, test: /\/pixel-config\/v1\//i },
+    // Snapchat's pixel. tr.snapchat.com carries the events; tr6 is the same
+    // endpoint on an IPv6-only host, sent an empty item purely to learn the
+    // visitor's IPv6 address; tr-shadow is the SDK's own A/B copy. One POST holds
+    // a batch, split into a row per item by eventsFromJSON. Items that are not
+    // events have no 'ev', so eventName names what kind of item they are.
+    { id: 'snap', kind: 'vendor', vendor: 'Snapchat pixel', eventKey: ['ev', 'log.name'],
+      eventName: snapItemName,
+      host: /^tr(6|-shadow)?\.snapchat\.com$/i, test: /\/p(\?|$)/i },
+    // The cookie-match legs: /cm/s and /cm/i are iframes that sync the _scid
+    // cookie with Snap's own domain, /cm/si sends the native-app click id. The
+    // iframes are only seen by the PerformanceObserver, so they arrive bodyless.
+    { id: 'snap', kind: 'vendor', vendor: 'Snapchat pixel (cookie match)',
+      eventName: '(cookie match)',
+      host: /^tr(6|-shadow)?\.snapchat\.com$/i, test: /\/cm\/(s|i|si)(\?|$)/i },
+    // TikTok's pixel. Specific paths before the bare /pixel, since endpointFor
+    // takes the first rule that matches.
+    { id: 'tiktok', kind: 'vendor', vendor: 'TikTok pixel (auto-collected)',
+      eventKey: ['action', 'auto_collected_properties.page_trigger'],
+      host: /(^|\.)tiktok\.com$/i, test: /\/api\/v2\/pixel\/act(\?|$)/i },
+    { id: 'tiktok', kind: 'vendor', vendor: 'TikTok pixel (engagement)',
+      eventKey: ['action', 'auto_collected_properties.action_event'],
+      host: /(^|\.)tiktok\.com$/i, test: /\/api\/v2\/pixel\/inter(\?|$)/i },
+    { id: 'tiktok', kind: 'vendor', vendor: 'TikTok pixel (performance)',
+      eventKey: ['action', 'auto_collected_properties.action_event'],
+      host: /(^|\.)tiktok\.com$/i, test: /\/api\/v2\/pixel\/perf(\?|$)/i },
+    { id: 'tiktok', kind: 'vendor', vendor: 'TikTok pixel', eventKey: ['event'],
+      host: /(^|\.)tiktok\.com$/i, test: /\/api\/v2\/pixel(\?|$)/i },
+    // The SDK's older measurement paths, still in its endpoint table.
+    { id: 'tiktok', kind: 'vendor', vendor: 'TikTok pixel (measurement)',
+      eventKey: ['event', 'action'],
+      host: /(^|\.)tiktok\.com$/i,
+      test: /\/api\/v2\/(performance|interaction|performance_interaction)(\?|$)/i },
+    // A copy of the first tracked event on the page, re-sent to an IPv6-only host
+    // so TikTok learns the IPv6 address too. Named EnrichIpv6, with the event it
+    // copied in trigger_event.
+    { id: 'tiktok', kind: 'vendor', vendor: 'TikTok pixel (IPv6 enrich)', eventKey: ['event'],
+      host: /(^|\.)tiktokw\.us$/i, test: /\/ipv6\/enrich_ipv6(\?|$)/i },
+    // LinkedIn Insight Tag. /collect is the pixel and a plain page load sends it
+    // with no conversionId, hence the fallback name.
+    { id: 'linkedin', kind: 'vendor', vendor: 'LinkedIn Insight', eventKey: ['conversionId'],
+      eventName: '(page view)',
+      host: /(^|\.)linkedin\.com$/i, test: /\/collect\/?(\?|$)/i },
+    // Website actions. The body is base64, usually of gzip — 'decode' turns it
+    // back into JSON before anything reads it. A DWELL report is a PAGE_VISIT
+    // with a subtype, so the subtype is read first.
+    { id: 'linkedin', kind: 'vendor', vendor: 'LinkedIn Insight (website actions)',
+      eventKey: ['signalSubType', 'signalType'], decode: liDecode,
+      host: /(^|\.)linkedin\.com$/i, test: /\/wa\/?(\?|$)/i },
+    { id: 'linkedin', kind: 'vendor', vendor: 'LinkedIn Insight (tag error)',
+      eventName: '(tag error)',
+      host: /(^|\.)linkedin\.com$/i, test: /\/insight_tag_errors\.gif(\?|$)/i },
     // Thribee's conversion pixel — a bare new Image() to rd.clk.thribee.com,
     // which the HTMLImageElement.src hook below catches.
     //
@@ -1425,6 +1798,15 @@
     // told apart by the tag text rather than at a glance. Kept anyway, because a
     // made-up colour for a vendor that HAS one is the worse trade.
     'openai': { tag: 'OPENAI', colour: '#10a37f' },
+    // Snapchat's yellow. Nothing else here is yellow, and the text colour is
+    // computed, so it stays readable.
+    'snap':    { tag: 'SNAP',    colour: '#fffc00' },
+    // TikTok's red-pink. Near Reddit's orange-red and Awin's pink; told apart by
+    // the tag text. TikTok's other brand colours are black, which disappears on
+    // a dark console, and a cyan that is already the Tealium collect pill.
+    'tiktok':  { tag: 'TIKTOK',  colour: '#fe2c55' },
+    // LinkedIn blue. Close to Meta's and Google's, the same trade as OpenAI.
+    'linkedin': { tag: 'LINKEDIN', colour: '#0a66c2' },
     // Lifull Connect's magenta, approximate. Distinct from Awin's pink by being
     // lighter and from Meta's blue by being nowhere near it.
     'thribee': { tag: 'THRIBEE', colour: '#c2185b' },
@@ -1795,6 +2177,18 @@
   // rows before this release, so their keys must be ticked or naming them is
   // what makes them disappear. The Meta CAPI Gateway was visible the same way,
   // and its every key is ticked for the same reason.
+  // 9.8 adds Snapchat, TikTok and LinkedIn. All three were visible as
+  // discovery rows before this release, so every key is ticked, for the same
+  // reason as 9.6. Read off the groups themselves rather than listed again:
+  // there are over two hundred, and a copy here would drift from the catalogue.
+  MIGRATIONS.push({ v: '9.8', keys: (function () {
+    var out = [];
+    CATALOGUE.forEach(function (g) {
+      if (['snap_wire', 'tiktok_wire', 'li_wire'].indexOf(g.id) < 0) return;
+      g.keys.forEach(function (k) { out.push(qid(g, k)); });
+    });
+    return out;
+  })() });
   // 9.6 adds OpenAI's pixel. The events endpoint was visible as a discovery row
   // before this release, so every key is ticked — naming a parameter must never
   // be the thing that hides it.
@@ -2849,7 +3243,28 @@
   // from an earlier one would attribute a request to a script that is no longer
   // even loaded.
   var scriptOwner = {};
-  function noteScript(src) {
+  // Script URL -> the Tealium tag that loaded it ('utag.84'), where that is
+  // knowable, inherited down the load chain the same way the owner is. And the
+  // <script> element each URL went in as, because the tag id is stamped onto
+  // the element AFTER its src is set — utag.ut.loader sets src, then id — so
+  // at the moment of injection it is not there yet and has to be read later.
+  var scriptTag = {}, scriptEl = {};
+  // A tag that is NOT bundled runs from its own file, utag.84.js, so a frame
+  // in that file names the tag outright. Bundled tags run inside utag.js and
+  // this finds nothing for them; the element id is what covers those.
+  function tagOfFrame(u) {
+    var m = /\/utag\.(\d+)\.js(\?|$)/i.exec(u || '');
+    return m ? 'utag.' + m[1] : '';
+  }
+  function tagFor(u) {
+    if (!u) return '';
+    if (scriptTag[u]) return scriptTag[u];
+    var el = scriptEl[u], m = el && /^utag_([A-Za-z0-9_.-]+)$/.exec(el.id || '');
+    if (m) return (scriptTag[u] = 'utag.' + m[1]);
+    var dom = domScriptOwner(u);
+    return dom ? dom.tag : '';
+  }
+  function noteScript(src, el) {
     try {
       // A new script is going in, so a lookup that found nothing a moment ago
       // might find something now. Cheaper than never caching, and correct:
@@ -2857,12 +3272,25 @@
       domOwnerCache = {};
       var abs = absUrl(src);
       if (!abs || abs.indexOf('http') !== 0) return;
+      if (el) scriptEl[abs] = el;
       var own = containerOfUrl(abs);
       if (own) { scriptOwner[abs] = own; return; }
       var frames = stackScripts();
       for (var i = 0; i < frames.length; i++) {
-        var c = containerOfUrl(frames[i]) || scriptOwner[frames[i]];
-        if (c) { scriptOwner[abs] = c; return; }   // transitive: piggybacked libraries
+        var f = frames[i];
+        var c = containerOfUrl(f);
+        var t = c ? tagOfFrame(f) : '';
+        if (!c && scriptOwner[f]) { c = scriptOwner[f]; t = tagFor(f); }
+        // The parent went in unwatched, but its element is in the DOM carrying
+        // its tag's id. This is the hop that used to break: the Tealium tag
+        // loads insight.min.js (or TikTok's events.js) through utag.ut.loader,
+        // and THAT script loads the library which actually sends the hits.
+        if (!c) { var dom = domScriptOwner(f); if (dom) { c = dom.container; t = dom.tag; } }
+        if (c) {                                   // transitive: piggybacked libraries
+          scriptOwner[abs] = c;
+          if (t) scriptTag[abs] = t;
+          return;
+        }
       }
     } catch (e) {}
   }
@@ -2873,10 +3301,9 @@
   // container: 'utag.55' is the thing you go and open in Tealium.
   //
   // Why this exists when scriptOwner already does the same job: scriptOwner is
-  // learned by watching the src setter as the script is injected, so it depends
-  // on the wrapper being installed before the injection and on the injector
-  // using .src rather than setAttribute. This needs neither — it reads the
-  // finished DOM — so it recovers ownership the hook can miss.
+  // learned by watching src being set as the script is injected, so it depends
+  // on the wrappers being installed before the injection. This does not — it
+  // reads the finished DOM — so it recovers ownership the hooks can miss.
   //
   // Only tags whose template passes an id are found. That is not every tag, so
   // this ADDS attributions and never replaces one: a miss here leaves the row
@@ -2922,9 +3349,11 @@
     var frames = stackScripts(), i;
     for (i = 0; i < frames.length; i++) {
       var own = containerOfUrl(frames[i]);
-      if (own) return { origin: own + ':direct', container: own, script: frames[i] };
+      if (own) return { origin: own + ':direct', container: own, script: frames[i],
+                        tag: tagOfFrame(frames[i]) || undefined };
       own = scriptOwner[frames[i]];
-      if (own) return { origin: own + ':via', container: own, script: frames[i] };
+      if (own) return { origin: own + ':via', container: own, script: frames[i],
+                        tag: tagFor(frames[i]) || undefined };
       // Nothing watched this script being injected, but the element it was
       // injected as may still be in the DOM carrying its loader's id.
       var dom = domScriptOwner(frames[i]);
@@ -3161,6 +3590,8 @@
       out.basis = 'Tealium developer id in the payload; stack named only the Google library';
     } else if (att.container && /:script-id$/.test(att.origin)) {
       out.basis = 'the script was injected as ' + (att.tag || 'a container tag');
+    } else if (att.container && att.tag) {
+      out.basis = 'from the call stack — loaded by ' + att.tag;
     } else if (att.container) {
       out.basis = 'from the call stack';
     } else if (declared) {
@@ -3453,6 +3884,7 @@
         host: host, path: tmpl, count: 0,
         first_seen: now.toISOString().slice(11, 23), last_seen: '',
         origin: att.origin, script: att.script ? shortScript(att.script) : '',
+        tag: att.tag || '',
         transports: {}, methods: {}, params: [], why: [], pages: [], sample: ''
       };
     }
@@ -3469,6 +3901,7 @@
     if (att.origin.indexOf('tealium') === 0 && e.origin.indexOf('tealium') !== 0) {
       e.origin = att.origin;
       e.script = att.script ? shortScript(att.script) : '';
+      e.tag = att.tag || '';
     }
     why.forEach(function (w) { if (e.why.indexOf(w) < 0) e.why.push(w); });
     if (e.pages.indexOf(location.pathname) < 0 && e.pages.length < 5) e.pages.push(location.pathname);
@@ -3479,7 +3912,8 @@
     if (first) {
       console.log('%c[CAP] new endpoint%c  ' + host + tmpl + '%c\n' +
         '        ' + (e.origin === 'tealium:direct' ? 'fired by Tealium directly'
-                    : e.origin === 'tealium:via'    ? 'fired by ' + e.script + ' (Tealium-loaded)'
+                    : /^tealium:(via|script-id)$/.test(e.origin)
+                      ? 'fired by ' + e.script + ' (loaded by ' + (e.tag || 'Tealium') + ')'
                     : e.origin === 'page'           ? 'fired by page code — ' + e.script
                     : 'origin unknown (seen after the fact)') +
         '  ·  ' + why.join(', '),
@@ -3535,6 +3969,31 @@
       if (!o || typeof o !== 'object') return;
       var d = {};
       Object.keys(inherited || {}).forEach(function (k) { d[k] = inherited[k]; });
+      // Snapchat's batch: {ctx:{…}, req:[…], u_scsid}. Each req item is one of
+      // {t:{…}} (a pixel event), {pc|md|log|i:{…}} (see the Snapchat catalogue
+      // group), plus 'del', its queueing delay. The event's own fields are
+      // hoisted out of 't' so the event name lands on 'ev', where a tag-side
+      // search for it would look; the other kinds keep their prefix, because
+      // that prefix is the only thing that says what kind of item the row is.
+      // An empty req is left on the row so a batch with nothing in it is still
+      // seen to have been sent.
+      if (Array.isArray(o.req) && o.ctx && typeof o.ctx === 'object' && o.req.length) {
+        var envS = {};
+        Object.keys(d).forEach(function (k) { envS[k] = d[k]; });
+        Object.keys(o).forEach(function (k) { if (k !== 'req') envS[k] = o[k]; });
+        o.req.forEach(function (it) {
+          if (!it || typeof it !== 'object' || Array.isArray(it)) return;
+          var r = {};
+          Object.keys(envS).forEach(function (k) { r[k] = envS[k]; });
+          Object.keys(it).forEach(function (k) {
+            if (k === 't' && it.t && typeof it.t === 'object' && !Array.isArray(it.t)) {
+              Object.keys(it.t).forEach(function (tk) { r[tk] = it.t[tk]; });
+            } else r[k] = it[k];
+          });
+          list.push(flatten(r, '', {}, 0));
+        });
+        return;
+      }
       // A vendor envelope that batches its events in a TOP-LEVEL 'events' array.
       // OpenAI's pixel posts {obref, oppref, events:[…], user:{…}} and would
       // otherwise land as a single row whose 'events' key holds the whole array
@@ -3578,6 +4037,39 @@
     if (Array.isArray(j)) j.forEach(function (o) { one(o, null); });
     else one(j, null);
     return list;
+  }
+  // What a Snapchat batch item is, when it is not an event: the row has no
+  // 'ev', and its key prefix is the only thing that says.
+  function snapItemName(d) {
+    var kinds = { 'pc.': '(auto advanced matching)', 'md.': '(page metadata)',
+                  'log.': '(SDK error)', 'i.': '(IPv6 ping)' };
+    for (var k in d) {
+      for (var p in kinds) if (k.indexOf(p) === 0) return kinds[p];
+    }
+    return '';
+  }
+  // LinkedIn's website-actions body. The URL's fmt says how it was packed:
+  //   g  JSON, gzipped, then base64   b  JSON, base64   a  plain JSON
+  // Plain JSON needs nothing, and is returned as null like anything this does
+  // not recognise. b decodes in place. g needs DecompressionStream, which is
+  // asynchronous, so it comes back as a Promise and noteRequest waits for it.
+  function liDecode(text, url) {
+    var fmt = '';
+    try { fmt = new URL(url).searchParams.get('fmt') || ''; } catch (e) {}
+    var t = String(text || '').replace(/\s+/g, '');
+    if (!t || (fmt !== 'g' && fmt !== 'b') || !/^[A-Za-z0-9+\/=_-]+$/.test(t)) return null;
+    var bin;
+    try { bin = atob(t.replace(/-/g, '+').replace(/_/g, '/')); } catch (e) { return null; }
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (fmt === 'b') {
+      try { return new TextDecoder().decode(bytes); } catch (e) { return null; }
+    }
+    if (typeof DecompressionStream !== 'function' || typeof Response !== 'function') return null;
+    try {
+      return new Response(new Blob([bytes]).stream()
+        .pipeThrough(new DecompressionStream('gzip'))).text();
+    } catch (e) { return null; }
   }
   function bodyToText(body) {
     if (body == null) return null;
@@ -3768,7 +4260,11 @@
     // fetch — can still say what it is. Without this the row prints its endpoint
     // id and then nothing, which reads like an event whose name went missing
     // rather than like a request that never had one.
-    if (info.endpoint.eventName) return info.endpoint.eventName;
+    // A batch can mix item kinds under one endpoint (Snapchat's does), so the
+    // name may be a function of the row rather than a fixed string.
+    var en = info.endpoint.eventName;
+    if (typeof en === 'function') en = en(d);
+    if (en) return en;
     var m = /\/pagead\/(?:1p-)?(?:viewthrough)?(?:conversion|user-list)\/([^\/?]+)/i.exec(info.path || '');
     return m ? m[1] : '';
   }
@@ -3811,6 +4307,7 @@
     row._net.fired_by = fb.name;
     row._net.fired_by_id = fb.container;
     if (fb.script) row._net.fired_by_script = fb.script;
+    if (fb.tag) row._net.fired_by_tag = fb.tag;
     if (fb.dispatcher) row._net.fired_by_dispatcher = fb.dispatcher;
     if (fb.command) row._net.fired_by_command = fb.command;
     // Fan-out grouping (Google Ads): which event this request is one leg of.
@@ -3844,7 +4341,12 @@
     linkNet(row, d);
     return row;
   }
-  function noteRequest(url, method, body, transport, patch) {
+  // Requests whose body is still being decoded, keyed by URL, each holding the
+  // late facts (timing, status) that arrived for it in the meantime. Without
+  // this the PerformanceObserver, finding no row yet, would log the request a
+  // second time, bodyless, before the decoded one landed.
+  var netPending = {};
+  function noteRequest(url, method, body, transport, patch, decoded) {
     try {
       var abs = absUrl(url);
       var ep = endpointFor(abs);
@@ -3857,6 +4359,32 @@
         return false;
       }
       if (!sourceOn('net')) return false;      // paused: nothing parsed, nothing stored
+      // A vendor that packs its body (LinkedIn's base64 and gzip) is unpacked
+      // first, so everything below sees JSON like any other POST. An async
+      // unpack re-enters here once it is done, flagged so it is not unpacked
+      // twice; one that fails keeps the raw body under a key of its own rather
+      // than letting parseQuery shred it into a nonsense parameter name.
+      if (ep.decode && !decoded) {
+        var packed = bodyToText(body);
+        var dec = packed != null ? ep.decode(packed, abs) : null;
+        if (dec && typeof dec.then === 'function') {
+          netPending[abs] = netPending[abs] || [];
+          var resume = function (t) {
+            var late = netPending[abs] || [];
+            delete netPending[abs];
+            var p2 = {};
+            late.concat(patch ? [patch] : []).forEach(function (o) {
+              Object.keys(o).forEach(function (k) { p2[k] = o[k]; });
+            });
+            noteRequest(url, method,
+              t != null ? t : JSON.stringify({ _undecoded_body: String(packed).slice(0, 400) }),
+              transport, Object.keys(p2).length ? p2 : null, true);
+          };
+          dec.then(resume, function () { resume(null); });
+          return true;
+        }
+        if (typeof dec === 'string') body = dec;
+      }
       var bodyText = bodyToText(body);
       if (netDupe(abs, bodyText)) return false;
       var q = {}, host = '', path = abs;
@@ -4006,19 +4534,40 @@
     // script.src — not a request we log, but the record of WHO loaded WHAT,
     // which is what lets a later pixel be attributed to the library that fired
     // it rather than to nobody. Same prototype-setter trick as the image hook.
-    // Scripts inserted with setAttribute('src') bypass this, exactly as images
-    // do; those requests still get discovered, just with origin 'page'.
     try {
       var sdsc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
       if (sdsc && sdsc.set && !sdsc.set.__cap) {
         var nss = function (v) {
-          try { noteScript(v); } catch (e) {}
+          try { noteScript(v, this); } catch (e) {}
           return sdsc.set.call(this, v);
         };
         nss.__cap = true;
         Object.defineProperty(HTMLScriptElement.prototype, 'src', {
           get: sdsc.get, set: nss, configurable: true, enumerable: sdsc.enumerable
         });
+      }
+    } catch (e) {}
+    // setAttribute('src') on a script — the route the setter above never sees,
+    // and the one Tealium's own tag loader takes: utag.ut.loader builds every
+    // tag's <script> with b.setAttribute('src', o.src). Missing it meant no
+    // library a Tealium tag loaded was ever recorded as Tealium's, so a vendor
+    // whose loader script fetches a second file that sends the hits (LinkedIn's
+    // insight.min.js, TikTok's events.js) had those hits put down to page code.
+    // Filtered to script elements and the one attribute before doing anything,
+    // since every setAttribute on the page passes through here.
+    try {
+      var osa = Element.prototype.setAttribute;
+      if (osa && !osa.__cap) {
+        var wsa = function (name, value) {
+          try {
+            if (this instanceof HTMLScriptElement && String(name).toLowerCase() === 'src') {
+              noteScript(value, this);
+            }
+          } catch (e) {}
+          return osa.apply(this, arguments);
+        };
+        wsa.__cap = true;
+        Element.prototype.setAttribute = wsa;
       }
     } catch (e) {}
     // form submit — fbevents.js under Meta's SmartSetup posts through a hidden
@@ -4075,6 +4624,7 @@
           if (e.transferSize) patch.bytes_in = e.transferSize;
           if (e.responseStatus) patch.status = e.responseStatus;
           if (enrich(e.name, patch)) return;
+          if (netPending[e.name]) { netPending[e.name].push(patch); return; }
           noteRequest(e.name, e.initiatorType === 'beacon' ? 'POST' : 'GET', null,
                       'perf:' + (e.initiatorType || '?'), patch);
         } catch (err) {}
