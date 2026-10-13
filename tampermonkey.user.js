@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      9.8
+// @version      9.9
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -420,6 +420,26 @@
       // read by Google's ad tags, so it belongs with the rest of them here.
       'cp.__eoi':    'Google ad cookie — EEA traffic, undocumented',
       'qp._gl':      'Google cross-domain linker — ids across domains'
+    }},
+    // Campaign tagging, as Tealium's built-in Query String data sources read it
+    // off the landing URL: every ?utm_x= arrives as qp.utm_x. Only present on
+    // the hits of a page whose URL carries them, so an empty group on an
+    // internal navigation is expected. The first five are the classic set; the
+    // last four are GA4's later additions and rarely filled in.
+    { name: 'Campaign (UTM)', keys: [
+      'qp.utm_source', 'qp.utm_medium', 'qp.utm_campaign', 'qp.utm_term',
+      'qp.utm_content', 'qp.utm_id', 'qp.utm_source_platform',
+      'qp.utm_creative_format', 'qp.utm_marketing_tactic'
+    ], labels: {
+      'qp.utm_source':          'Traffic source (google, newsletter …)',
+      'qp.utm_medium':          'Medium (cpc, email, social …)',
+      'qp.utm_campaign':        'Campaign name',
+      'qp.utm_term':            'Paid search keyword',
+      'qp.utm_content':         'Ad / link variant',
+      'qp.utm_id':              'Campaign id',
+      'qp.utm_source_platform': 'Buying platform (DV360, SA360 …)',
+      'qp.utm_creative_format': 'Creative format',
+      'qp.utm_marketing_tactic': 'Targeting tactic (remarketing …)'
     }},
     // ─────────────────────────────────────────────────────────────────────────
     // SCOPED GROUP. These are Reddit's own pixel parameters as they appear on the
@@ -896,7 +916,7 @@
         '_inspection.*'
       ], labels: {
         'event':            'TikTok event name (ViewContent …)',
-        'action':           'Auto-collected event name',
+        'action':           'Auto event name — Pf is an SDK page report',
         'trigger_event':    'Event this IPv6 enrich rode in on',
         'event_id':         'Event id — dedupes against the Events API',
         'message_id':       'Unique id of this one request',
@@ -938,7 +958,7 @@
         'context.*':            'Other context',
         'auto_collected_properties.page_trigger': 'What made the SDK collect this',
         'auto_collected_properties.content_data.*': 'Page metadata — Open Graph tags …',
-        'auto_collected_properties.action_event': 'Engagement trigger — page leave …',
+        'auto_collected_properties.action_event': 'twt every 10s, pl on leave, or a timing',
         'auto_collected_properties.inter.ct': 'Clicks on the page',
         'auto_collected_properties.inter.st': 'Scrolls on the page',
         'auto_collected_properties.inter.pl': 'Time on page (ms)',
@@ -1448,6 +1468,10 @@
     // five are ticked — the same rule as every pass above it.
     'cp._gcl_gs', 'cp.__gcl_aw', 'cp.__gcl_gs',
     'meta.pageview_name', 'meta.external_ids',
+    // 9.9: the UTMs. Were visible as uncatalogued on campaign landings.
+    'qp.utm_source', 'qp.utm_medium', 'qp.utm_campaign', 'qp.utm_term',
+    'qp.utm_content', 'qp.utm_id', 'qp.utm_source_platform',
+    'qp.utm_creative_format', 'qp.utm_marketing_tactic',
     // Everything below this point is derived, not listed — see wireDefaults().
     'event', 'reddit_pixel_event_id_*', 'fb_event_id_*',
     'tci.event_id'
@@ -1698,11 +1722,14 @@
     { id: 'tiktok', kind: 'vendor', vendor: 'TikTok pixel (auto-collected)',
       eventKey: ['action', 'auto_collected_properties.page_trigger'],
       host: /(^|\.)tiktok\.com$/i, test: /\/api\/v2\/pixel\/act(\?|$)/i },
+    // These two always carry action 'Pf', which is not an event: it is the
+    // SDK's internal name for its own page reports. What tells them apart is
+    // action_event, so that is the headline — see tiktokPageReport.
     { id: 'tiktok', kind: 'vendor', vendor: 'TikTok pixel (engagement)',
-      eventKey: ['action', 'auto_collected_properties.action_event'],
+      eventKey: [], eventName: tiktokPageReport,
       host: /(^|\.)tiktok\.com$/i, test: /\/api\/v2\/pixel\/inter(\?|$)/i },
     { id: 'tiktok', kind: 'vendor', vendor: 'TikTok pixel (performance)',
-      eventKey: ['action', 'auto_collected_properties.action_event'],
+      eventKey: [], eventName: tiktokPageReport,
       host: /(^|\.)tiktok\.com$/i, test: /\/api\/v2\/pixel\/perf(\?|$)/i },
     { id: 'tiktok', kind: 'vendor', vendor: 'TikTok pixel', eventKey: ['event'],
       host: /(^|\.)tiktok\.com$/i, test: /\/api\/v2\/pixel(\?|$)/i },
@@ -2227,6 +2254,13 @@
     'fbcapi_wire:conversion_value.currency', 'fbcapi_wire:fb.search_string',
     'fbcapi_wire:fb.dynamic_product_ads.content_ids',
     'fbcapi_wire:fb.dynamic_product_ads.content_type', 'fbcapi_wire:smart_setup.*'
+  ] });
+  // 9.9 names the UTM query parameters. Each was visible as uncatalogued on any
+  // campaign landing, so each is ticked — naming it must not be what hides it.
+  MIGRATIONS.push({ v: '9.9', keys: [
+    'qp.utm_source', 'qp.utm_medium', 'qp.utm_campaign', 'qp.utm_term',
+    'qp.utm_content', 'qp.utm_id', 'qp.utm_source_platform',
+    'qp.utm_creative_format', 'qp.utm_marketing_tactic'
   ] });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
@@ -3345,7 +3379,17 @@
   // bottom of the stack for anything fired during its initialisation, so a
   // Taboola pixel with [tfa.js, utag.js] on the stack would be reported as
   // Tealium firing it directly. The immediate caller made the request.
+  // Set while a request is recorded after an async hop (a Blob beacon read, a
+  // gzip body decoded): the stack by then is this script's own callback and
+  // names nobody, so the attribution taken BEFORE the hop is used instead.
+  var heldAtt = null;
+  function withAtt(att, fn) {
+    var prev = heldAtt;
+    heldAtt = att;
+    try { return fn(); } finally { heldAtt = prev; }
+  }
   function attributionFor() {
+    if (heldAtt) return heldAtt;
     var frames = stackScripts(), i;
     for (i = 0; i < frames.length; i++) {
       var own = containerOfUrl(frames[i]);
@@ -4048,6 +4092,23 @@
     }
     return '';
   }
+  // TikTok's /pixel/inter and /pixel/perf reports, named by action_event. The
+  // codes are the SDK's own: twt is its time-window tracker, which reports
+  // clicks, scrolls and time on page every 10 seconds while the visitor is
+  // active, and pl the same totals once more on leaving. The rest are timing
+  // marks. An unknown code is shown as it came.
+  function tiktokPageReport(d) {
+    var names = {
+      twt: 'engagement (10s window)', pl: 'page leave',
+      fcp: 'first contentful paint', lcp: 'largest contentful paint',
+      fid: 'first input delay', ttfb: 'time to first byte',
+      lf: 'load finished', tti: 'time to interactive'
+    };
+    var v = d['auto_collected_properties.action_event'];
+    if (Array.isArray(v)) v = v[0];
+    if (v) return hasOwn(names, v) ? names[v] : String(v);
+    return d.action ? String(d.action) : '';
+  }
   // LinkedIn's website-actions body. The URL's fmt says how it was packed:
   //   g  JSON, gzipped, then base64   b  JSON, base64   a  plain JSON
   // Plain JSON needs nothing, and is returned as null like anything this does
@@ -4320,6 +4381,25 @@
         row._net.leg_n = groupSize[gk];
         if (groupMeta[gk].repeat_ms != null) row._net.repeat_ms = groupMeta[gk].repeat_ms;
         if (!groupMeta[gk].container && fb.container) groupMeta[gk].container = fb.container;
+        // A leg that joined a gtag COMMAND's group by a weaker link (the auid)
+        // because it carries no AW id to match the command on: Google's
+        // ad.doubleclick.net/ccm/s/collect companion of ccm/collect. Its own
+        // stack names only gtag.js, which is owned by whoever inserted it —
+        // GTM on huurwoningen.com — so it was reported as GTM while every
+        // sibling in the same line said Tealium. The command is the better
+        // witness, so the leg takes the container the group already proved.
+        var gc = groupMeta[gk].container;
+        if (/^cmd:/.test(gk) && gc && !fb.cmd_seq && !fb.confirmed && !fb.conflict &&
+            fb.container !== gc) {
+          fb.dispatcher = fb.script || fb.dispatcher;
+          fb.container = gc;
+          fb.name = (containerById(gc) || {}).name || gc;
+          fb.how = gc + ':command';
+          fb.basis = 'leg of the gtag command its siblings matched';
+          row._net.fired_by = fb.name;
+          row._net.fired_by_id = gc;
+          if (fb.dispatcher) row._net.fired_by_dispatcher = fb.dispatcher;
+        }
         // A later leg often has the better event name (ccm/collect says
         // page_view where the config ping says gtag.config): keep the head's.
         if (groupMeta[gk].event && !row._net.event) row._net.event = groupMeta[gk].event;
@@ -4369,6 +4449,7 @@
         var dec = packed != null ? ep.decode(packed, abs) : null;
         if (dec && typeof dec.then === 'function') {
           netPending[abs] = netPending[abs] || [];
+          var att0 = attributionFor();
           var resume = function (t) {
             var late = netPending[abs] || [];
             delete netPending[abs];
@@ -4376,9 +4457,11 @@
             late.concat(patch ? [patch] : []).forEach(function (o) {
               Object.keys(o).forEach(function (k) { p2[k] = o[k]; });
             });
-            noteRequest(url, method,
-              t != null ? t : JSON.stringify({ _undecoded_body: String(packed).slice(0, 400) }),
-              transport, Object.keys(p2).length ? p2 : null, true);
+            withAtt(att0, function () {
+              noteRequest(url, method,
+                t != null ? t : JSON.stringify({ _undecoded_body: String(packed).slice(0, 400) }),
+                transport, Object.keys(p2).length ? p2 : null, true);
+            });
           };
           dec.then(resume, function () { resume(null); });
           return true;
@@ -4399,7 +4482,13 @@
         var raw = {};
         Object.keys(q).forEach(function (k) { raw[k] = q[k]; });
         if (bodies[i]) { var b = bodies[i]; Object.keys(b).forEach(function (k) { raw[k] = b[k]; }); }
-        var ex = expandEnvelopes(raw);
+        // Only Tealium's own endpoints wrap their payload in a JSON envelope. A
+        // vendor parameter that merely HOLDS a JSON string is a value, not a
+        // batch: TikTok's Metadata event sends the page's JSON-LD blocks as
+        // content_data.json_ld='[{…},{…},{…}]', and unwrapping it split one
+        // event into three rows of schema.org fields. Meta's cd[contents] is
+        // the same shape. Vendors that really batch are split in eventsFromJSON.
+        var ex = ep.kind === 'vendor' ? { list: [raw], expanded: [] } : expandEnvelopes(raw);
         var wire = Object.keys(raw).length;
         ex.list.forEach(function (p) {
           units.push({ params: p, wire: wire, expanded: ex.expanded });
@@ -4500,8 +4589,12 @@
         var wb = function (url, data) {
           try {
             if (data && typeof data.text === 'function' && typeof data.size === 'number') {
-              data.text().then(function (t) { noteRequest(url, 'POST', t, 'beacon'); }, function () {
-                noteRequest(url, 'POST', null, 'beacon');
+              // Read asynchronously, so the caller's stack is taken now.
+              var batt = attributionFor();
+              data.text().then(function (t) {
+                withAtt(batt, function () { noteRequest(url, 'POST', t, 'beacon'); });
+              }, function () {
+                withAtt(batt, function () { noteRequest(url, 'POST', null, 'beacon'); });
               });
             } else noteRequest(url, 'POST', data, 'beacon');
           } catch (e) {}
