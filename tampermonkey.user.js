@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.2
+// @version      10.3
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -5450,14 +5450,14 @@
     });
     var row = el('div', 'display:flex;gap:4px;margin:8px 0 2px');
     var bc = el('button', 'flex:1;background:#3a3a3a;border:0;color:#eee;border-radius:5px;' +
-      'padding:5px 6px;font:700 11px inherit;cursor:pointer', 'Copy JSON');
+      'padding:5px 6px;font-weight:700;font-size:11px;font-family:inherit;cursor:pointer', 'Copy JSON');
     bc.addEventListener('click', function () {
       copy(JSON.stringify(discSorted(), null, 2), function (ok) {
         toast(ok ? 'Copied ' + list.length + ' endpoints' : 'Copy failed', ok);
       });
     });
     var bx = el('button', 'flex:none;background:#4a2222;border:0;color:#eee;border-radius:5px;' +
-      'padding:5px 8px;font:700 11px inherit;cursor:pointer', 'Clear');
+      'padding:5px 8px;font-weight:700;font-size:11px;font-family:inherit;cursor:pointer', 'Clear');
     bx.addEventListener('click', function () {
       discMap = {}; discDirty = true; discFlush();
       renderDiscovered(); refreshBadge(); toast('Discovery cleared');
@@ -5526,13 +5526,13 @@
       '.cap-fh{display:flex;align-items:center;gap:6px;margin:9px 0 1px;cursor:pointer;user-select:none}',
       '.cap-fh:hover .cap-fh-name{color:#b6e0fb}',
       '.cap-fh-chev{color:#666;font-size:9px;flex:none;width:7px}',
-      '.cap-fh-name{flex:1;min-width:0;font:700 11px inherit;color:#8ecdf5;text-transform:uppercase;',
+      '.cap-fh-name{flex:1;min-width:0;font-weight:700;font-size:11px;font-family:inherit;color:#8ecdf5;text-transform:uppercase;',
       '  letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.cap-count{flex:none;font:600 10px ui-monospace,Menlo,monospace;color:#8f8f8f;',
       '  background:#2b2b2b;border-radius:999px;padding:1px 6px}',
       '.cap-count.on{color:#0f2231;background:#8ecdf5}',
       '.cap-bulk{flex:none;display:flex;gap:1px}',
-      '.cap-bulk button{background:#2b2b2b;border:0;color:#9a9a9a;font:600 10px inherit;',
+      '.cap-bulk button{background:#2b2b2b;border:0;color:#9a9a9a;font-weight:600;font-size:10px;font-family:inherit;',
       '  padding:2px 6px;cursor:pointer}',
       '.cap-bulk button:first-child{border-radius:4px 0 0 4px}',
       '.cap-bulk button:last-child{border-radius:0 4px 4px 0}',
@@ -5547,10 +5547,54 @@
       '.cap-k{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:#7c7c7c;word-break:break-all}',
       '.cap-f.on .cap-k{color:#9d9d9d}',
       '.cap-note{font-size:10px;color:#777;margin-top:5px}',
-      '.cap-empty{font-size:11px;color:#8a8a8a;padding:10px 2px;text-align:center}'
+      '.cap-empty{font-size:11px;color:#8a8a8a;padding:10px 2px;text-align:center}',
+      // ── panel controls ──
+      // Section header: title, an on/total count, and the all/none pair.
+      '.cap-sec{margin:0 0 10px}',
+      '.cap-sech{display:flex;align-items:center;gap:6px;margin:0 0 5px}',
+      '.cap-sect{font-weight:700;font-size:10px;color:#8ecdf5;text-transform:uppercase;letter-spacing:.5px}',
+      '.cap-secn{flex:1;font:600 10px ui-monospace,Menlo,monospace;color:#6f6f6f}',
+      // Chips sit on a grid so the columns line up however long the names are.
+      '.cap-chips{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}',
+      '.cap-chip{box-sizing:border-box;min-width:0;height:22px;padding:0 4px;border-radius:5px;',
+      '  border:1px solid transparent;font-weight:700;font-size:9.5px;font-family:inherit;',
+      '  letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}',
+      '.cap-chip:hover{filter:brightness(1.12)}',
+      // Muted: an empty outline. No strikethrough — nineteen struck-out names
+      // was the loudest thing in the panel, for the state that matters least.
+      '.cap-chip.off{background:transparent;border-color:#363636;color:#6a6a6a}',
+      '.cap-chip.off:hover{border-color:#555;color:#a8a8a8;filter:none}',
+      // Options.
+      '.cap-opt{display:flex;align-items:center;gap:7px;padding:3px 0;cursor:pointer;font-size:11px;color:#cfcfcf}',
+      '.cap-opt input{margin:0;width:13px;height:13px;cursor:pointer;flex:none;accent-color:#4f8fbf}',
+      '.cap-hr{border-top:1px solid #2e2e2e;margin:8px 0}',
+      // Export row: one segmented group, and Clear set apart and quieter.
+      '.cap-acts{display:flex;gap:6px;margin:0 0 6px}',
+      '.cap-seg{flex:1;display:flex;gap:1px;border-radius:6px;overflow:hidden}',
+      '.cap-seg button,.cap-clear{border:0;padding:6px 0;font-weight:600;font-size:11px;',
+      '  font-family:inherit;cursor:pointer}',
+      '.cap-seg button{flex:1;background:#2b2b2b;color:#ddd}',
+      '.cap-seg button:hover{background:#383838;color:#fff}',
+      '.cap-clear{flex:none;padding:6px 10px;border-radius:6px;background:transparent;',
+      '  color:#ef9a9a;box-shadow:inset 0 0 0 1px #5a2a2a}',
+      '.cap-clear:hover{background:#4a2222;color:#fff}',
+      // Disclosures: Discovered and Fields look and behave the same.
+      '.cap-dis{display:flex;align-items:center;gap:8px;width:100%;margin:0 0 4px;padding:7px 9px;',
+      '  border:0;border-radius:6px;background:#262626;color:#e6e6e6;font-weight:600;font-size:12px;',
+      '  font-family:inherit;text-align:left;cursor:pointer}',
+      '.cap-dis:hover{background:#2f2f2f}',
+      '.cap-dis-l{flex:1}',
+      '.cap-dis-n{font:600 10px ui-monospace,Menlo,monospace;color:#9a9a9a;background:#333;',
+      '  border-radius:999px;padding:1px 7px}',
+      '.cap-dis-c{color:#777;font-size:10px;width:8px;text-align:center}',
+      // Toast floats above the pill instead of reserving an empty line in the panel.
+      '.cap-toast{position:absolute;right:0;bottom:100%;margin-bottom:6px;max-width:260px;',
+      '  background:#1e1e1e;border-radius:6px;padding:4px 9px;font-size:11px;white-space:nowrap;',
+      '  overflow:hidden;text-overflow:ellipsis;box-shadow:0 2px 8px rgba(0,0,0,.35);',
+      '  opacity:0;transition:opacity .2s;pointer-events:none}'
     ].join('\n');
     root.appendChild(css);
-    var wrap = el('div', 'font:12px/1.4 -apple-system,Segoe UI,Roboto,sans-serif');
+    var wrap = el('div', 'position:relative;font:12px/1.4 -apple-system,Segoe UI,Roboto,sans-serif');
     var pill = el('div', 'display:flex;align-items:center;gap:8px;background:#1e1e1e;color:#eee;' +
       'font-weight:700;font-size:12px;padding:8px 10px;border-radius:999px;' +
       'box-shadow:0 3px 12px rgba(0,0,0,.35);cursor:grab;user-select:none');
@@ -5568,10 +5612,6 @@
     panelEl = el('div', 'display:none;margin-top:8px;background:#1e1e1e;color:#eee;border-radius:10px;' +
       'padding:10px;box-shadow:0 3px 16px rgba(0,0,0,.4);width:280px;max-height:70vh;overflow:auto');
     wrap.appendChild(panelEl);
-    function mkBtn(label, css) {
-      return el('button', 'display:block;width:100%;margin:4px 0;padding:7px 9px;border:0;border-radius:6px;' +
-        'background:' + (css || '#2f2f2f') + ';color:#eee;font:700 12px inherit;text-align:left;cursor:pointer', label);
-    }
     // Sources — the two switches. Unticking pauses capture as well as hiding,
     // so beacons stop eating the row budget when you only care about utag calls.
     // ── FILTERS ─────────────────────────────────────────────────────────────
@@ -5587,12 +5627,22 @@
     // load until something fired with the panel already up — a count that is
     // wrong most of the time is worse than none. The badge on the pill is the
     // live total, and __capNet() breaks it down.
-    var srcWrap = el('div', 'margin:2px 0 8px');
+    var srcWrap = el('div', 'margin:2px 0 0');
     function chipRow(title, pills) {
-      var wrapEl = el('div', 'margin:0 0 7px');
-      var head = el('div', 'display:flex;align-items:baseline;justify-content:space-between;margin:0 0 3px');
-      head.appendChild(el('span', 'font-weight:700;color:#8ecdf5;font-size:10px;' +
-        'text-transform:uppercase;letter-spacing:.4px', title));
+      var wrapEl = el('div');
+      wrapEl.className = 'cap-sec';
+      var head = el('div');
+      head.className = 'cap-sech';
+      var t = el('span', null, title);
+      t.className = 'cap-sect';
+      t.title = 'Click a chip to pause and hide that row type. Rows already captured ' +
+                'come back when you switch it on again.';
+      head.appendChild(t);
+      // How many of this row's types are capturing, e.g. 3/19. Replaces the
+      // sentence that used to sit under the chips and say the same thing.
+      var n = el('span');
+      n.className = 'cap-secn';
+      head.appendChild(n);
       // Two buttons rather than one 'all · none' that toggled on whatever the
       // chips happened to be: clicking the word 'all' could mute the row, which
       // is the opposite of what it says. Same pair, same styling, as the Fields
@@ -5611,9 +5661,10 @@
       });
       head.appendChild(bulk);
       wrapEl.appendChild(head);
-      var row = el('div', 'display:flex;flex-wrap:wrap;gap:3px');
+      var row = el('div');
+      row.className = 'cap-chips';
       wrapEl.appendChild(row);
-      return { el: wrapEl, row: row };
+      return { el: wrapEl, row: row, count: n };
     }
     var tealiumRow = chipRow('Tealium', legendPills().slice(0, 4));
     var vendorRow  = chipRow('Vendors', legendPills().slice(4));
@@ -5621,25 +5672,22 @@
     legendEl.appendChild(tealiumRow.el);
     legendEl.appendChild(vendorRow.el);
     srcWrap.appendChild(legendEl);
-    var legendNote = el('div', 'font-size:10px;color:#777;margin:-2px 0 0');
-    srcWrap.appendChild(legendNote);
     renderLegend = function () {
       tealiumRow.row.textContent = '';
       vendorRow.row.textContent = '';
-      var muted = 0;
+      var onCount = [0, 0], total = [0, 0];
       legendPills().forEach(function (p, i) {
         var on = pillOn(p.key);
-        if (!on) muted++;
-        // Muted is the same chip drained of colour, never a different shape, so
-        // the row stays scannable and a colour never changes meaning.
-        var chip = el('button',
-          'background:' + (on ? p.colour : '#2a2a2a') + ';color:' + (on ? textOn(p.colour) : '#6d6d6d') +
-          ';font:700 9px inherit;padding:2px 5px;border-radius:3px;flex:none;cursor:pointer;' +
-          'display:inline-flex;align-items:center;gap:4px;' +
-          'border:' + (p.ring && on ? '1px solid ' + lighten(p.colour, 0.55)
-                     : on ? '1px solid transparent' : '1px solid #3a3a3a') +
-          (on ? '' : ';text-decoration:line-through'), '');
-        chip.appendChild(el('span', null, p.tag));
+        var r = i < 4 ? 0 : 1;
+        total[r]++;
+        if (on) onCount[r]++;
+        // Muted is the same chip, same place, drained to an outline, so the grid
+        // never reflows and a colour never changes meaning.
+        var chip = el('button', on
+          ? 'background:' + p.colour + ';color:' + textOn(p.colour) +
+            (p.ring ? ';border-color:' + lighten(p.colour, 0.55) : '')
+          : null, p.tag);
+        chip.className = 'cap-chip' + (on ? '' : ' off');
         chip.title = (on ? 'Capturing ' : 'Muted — ') + p.note +
                      (on ? '. Click to mute.' : '. Click to capture again.');
         chip.addEventListener('click', function () {
@@ -5649,18 +5697,17 @@
         });
         (i < 4 ? tealiumRow.row : vendorRow.row).appendChild(chip);
       });
-      legendNote.textContent = muted
-        ? muted + ' muted — paused and hidden. Rows already captured come back when you unmute.'
-        : 'Click a chip to pause and hide that row type.';
+      tealiumRow.count.textContent = onCount[0] + '/' + total[0];
+      vendorRow.count.textContent  = onCount[1] + '/' + total[1];
     };
     renderLegend();
     // ── OPTIONS ─────────────────────────────────────────────────────────────
     function optionRow(label, get, set, hint) {
-      var lab = el('label', 'display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;font-size:11px;color:#ddd');
+      var lab = el('label');
+      lab.className = 'cap-opt';
       var cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = get();
-      cb.style.cssText = 'margin:0;cursor:pointer;flex:none';
       cb.addEventListener('change', function () { set(cb.checked); });
       lab.appendChild(cb);
       lab.appendChild(el('span', null, label));
@@ -5678,43 +5725,68 @@
         toast(v ? 'Explaining fields inline' : 'Explanations off — use __capExplain()');
       }, 'Adds the meaning of each parameter as a third column');
     renderLabelToggle = function () { labOpt.cb.checked = labelsInline(); };
-    srcWrap.appendChild(el('div', 'border-top:1px solid #313131;margin:7px 0 4px'));
+    var hr1 = el('div');
+    hr1.className = 'cap-hr';
+    srcWrap.appendChild(hr1);
     srcWrap.appendChild(discOpt.el);
     srcWrap.appendChild(labOpt.el);
+    var hr2 = el('div');
+    hr2.className = 'cap-hr';
+    srcWrap.appendChild(hr2);
     panelEl.appendChild(srcWrap);
     // ── ACTIONS ─────────────────────────────────────────────────────────────
     // Four exports as one compact row rather than four full-width bars: they are
     // the least-used controls in the panel and they were pushing Fields, the
     // most-used one, below the fold.
-    function smBtn(label, css) {
-      return el('button', 'flex:1;min-width:0;padding:6px 4px;border:0;border-radius:6px;' +
-        'background:' + (css || '#2f2f2f') + ';color:#eee;font:700 11px inherit;cursor:pointer', label);
+    // Disclosure button: label, count pill, chevron. Discovered and Fields share
+    // it so the two read as the same kind of control.
+    function disBtn(label) {
+      var b = el('button');
+      b.className = 'cap-dis';
+      var l = el('span', null, label); l.className = 'cap-dis-l';
+      var n = el('span'); n.className = 'cap-dis-n';
+      var c = el('span'); c.className = 'cap-dis-c';
+      b.appendChild(l); b.appendChild(n); b.appendChild(c);
+      b.paint = function (count, open) {
+        n.textContent = count == null ? '' : String(count);
+        n.style.display = count == null ? 'none' : '';
+        c.textContent = open ? '▾' : '▸';
+      };
+      return b;
     }
-    var bFields = mkBtn('⚙  Fields…');
-    var bDisc   = mkBtn('🛰  Discovered…');
+    var bFields = disBtn('Fields');
+    var bDisc   = disBtn('Discovered');
+    bFields.title = 'Choose which attributes the console and the exports show';
+    bDisc.title   = 'Third-party tracking endpoints that are not in the catalogue yet';
     // The button carries the count for the same reason Discovered does: how many
     // fields are ticked decides what the console shows, and having to open the
     // picker to find out is how you end up debugging a filter you forgot you set.
-    function fieldsLabel() {
-      var open = fieldsEl.style.display !== 'none';
-      return '⚙  Fields (' + fieldStats().on + ')' + (open ? ' ▾' : '…');
+    function paintFields() {
+      bFields.paint(fieldStats().on, fieldsEl.style.display !== 'none');
     }
-    renderFieldsButton = function () { bFields.textContent = fieldsLabel(); };
-    var actions = el('div', 'display:flex;gap:4px;margin:4px 0 0');
-    var bCopy  = smBtn('Copy');
-    var bJSON  = smBtn('JSON');
-    var bCSV   = smBtn('CSV');
-    var bClear = smBtn('Clear', '#4a2222');
+    renderFieldsButton = paintFields;
+    var actions = el('div');
+    actions.className = 'cap-acts';
+    var seg = el('div');
+    seg.className = 'cap-seg';
+    var bCopy  = el('button', null, 'Copy');
+    var bJSON  = el('button', null, 'JSON');
+    var bCSV   = el('button', null, 'CSV');
+    var bClear = el('button', null, 'Clear');
+    bClear.className = 'cap-clear';
     bCopy.title  = 'Copy the visible captures as JSON';
     bJSON.title  = 'Download the visible captures as JSON';
     bCSV.title   = 'Download the visible captures as CSV';
     bClear.title = 'Delete every stored capture';
-    [bCopy, bJSON, bCSV, bClear].forEach(function (b) { actions.appendChild(b); });
-    toastEl = el('div', 'margin-top:6px;font-size:11px;opacity:0;transition:opacity .2s;min-height:14px');
+    [bCopy, bJSON, bCSV].forEach(function (b) { seg.appendChild(b); });
+    actions.appendChild(seg);
+    actions.appendChild(bClear);
+    toastEl = el('div');
+    toastEl.className = 'cap-toast';
     // No top padding: the sticky search bar supplies its own, and a gap here
     // would be a strip the bar cannot cover when the list scrolls under it.
     fieldsEl = el('div', 'display:none;border-top:1px solid #333;margin-top:8px');
-    discEl = el('div', 'display:none;border-top:1px solid #333;margin-top:8px;padding-top:4px');
+    discEl = el('div', 'display:none;border-top:1px solid #333;margin:4px 0 8px;padding-top:4px');
     // ── ORDER ───────────────────────────────────────────────────────────────
     // Each disclosure sits DIRECTLY above the thing it opens. They used to be
     // two buttons stacked at the top with both bodies far below, past the export
@@ -5725,23 +5797,27 @@
     // Fields goes last because it is the tall one: a picker that pushes four
     // hundred rows into the middle of the panel buries every control under it,
     // whereas at the bottom it simply extends downwards and the panel scrolls.
+    //
+    // The export row comes first now, so the two disclosures sit together at
+    // the bottom: Discovered opens between them, Fields opens last and extends
+    // the panel downwards.
+    panelEl.appendChild(actions);
     panelEl.appendChild(bDisc);
     panelEl.appendChild(discEl);
-    panelEl.appendChild(actions);
-    panelEl.appendChild(toastEl);
     panelEl.appendChild(bFields);
     panelEl.appendChild(fieldsEl);
-    function discLabel() {
+    wrap.appendChild(toastEl);
+    function paintDisc() {
       var n = Object.keys(discAll()).length;
-      return '🛰  Discovered' + (n ? ' (' + n + ')' : '') + (discEl.style.display === 'none' ? '…' : ' ▾');
+      bDisc.paint(n || null, discEl.style.display !== 'none');
     }
     // ONE open at a time. Both are tall, and two open at once is a panel you can
     // only navigate by scrolling past whichever you were not looking at.
     function setDisclosures(which) {
       fieldsEl.style.display = which === 'fields' ? 'block' : 'none';
       discEl.style.display   = which === 'disc'   ? 'block' : 'none';
-      bFields.textContent = fieldsLabel();
-      bDisc.textContent = discLabel();
+      paintFields();
+      paintDisc();
     }
     // Scrolls the button to the top of the panel so its body is the thing in
     // view. Measured from rects rather than offsetTop: offsetParent is the host,
@@ -5752,7 +5828,7 @@
                              panelEl.getBoundingClientRect().top - 4;
       } catch (e) {}
     }
-    bFields.textContent = fieldsLabel();
+    paintFields();
     bFields.addEventListener('click', function () {
       var open = fieldsEl.style.display === 'none';
       setDisclosures(open ? 'fields' : null);
@@ -5764,7 +5840,7 @@
         try { fieldsUI.q.focus(); } catch (e) {}
       }
     });
-    bDisc.textContent = discLabel();
+    paintDisc();
     bDisc.addEventListener('click', function () {
       var open = discEl.style.display === 'none';
       if (open) renderDiscovered();
