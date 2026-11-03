@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.8
+// @version      10.9
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -50,7 +50,7 @@
   // Shown on the TAGS pill while the panel is open. Must equal @version in the
   // header: the Chrome extension has no GM_info to read it from, so it lives
   // here too, and extension/build.py (run on every PR) fails if they differ.
-  var VERSION = '10.8';
+  var VERSION = '10.9';
   // ───────────────────────────────────────────────────────────────────────────
   // CATALOGUE — every attribute the picker offers.
   // Everything here is always CAPTURED; the picker controls what is DISPLAYED
