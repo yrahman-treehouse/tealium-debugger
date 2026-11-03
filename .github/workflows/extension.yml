@@ -1,0 +1,69 @@
+# Builds the Chrome extension from tampermonkey.user.js on every change to main.
+#
+# A new @version gets a GitHub release (tag v<version>) with the zip attached,
+# and, once the three CWS_* secrets exist, is uploaded to the Chrome Web Store
+# and submitted for publishing. Chrome then auto-updates every install.
+# A push that does not bump @version builds the zip as a check and stops there.
+name: Chrome extension
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - tampermonkey.user.js
+      - extension/**
+      - .github/workflows/extension.yml
+  pull_request:
+    paths:
+      - tampermonkey.user.js
+      - extension/**
+      - .github/workflows/extension.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: extension-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      CWS_SERVICE_ACCOUNT_KEY: ${{ secrets.CWS_SERVICE_ACCOUNT_KEY }}
+      CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+      CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        id: build
+        run: python3 extension/build.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tealium-debugger-${{ steps.build.outputs.version }}
+          path: dist/extension/
+
+      - name: GitHub release (new versions only)
+        id: release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.build.outputs.version }}
+          ZIP: ${{ steps.build.outputs.zip }}
+        run: |
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION is already released; bump @version to ship a new build."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+          else
+            gh release create "v$VERSION" "$ZIP" \
+              --title "v$VERSION" --target "$GITHUB_SHA" \
+              --notes "Built from $GITHUB_SHA. Tampermonkey users update from the raw URL; the zip is the Chrome extension."
+            echo "created=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to the Chrome Web Store
+        if: steps.release.outputs.created == 'true' && env.CWS_EXTENSION_ID != ''
+        run: python3 extension/cws_publish.py "${{ steps.build.outputs.zip }}"
