@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.0
+// @version      10.1
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -73,8 +73,13 @@
       // position in localStorage (th_serp_clicks); the ODP's inline utag_data
       // copies them here if that click is under 30 minutes old. Absent on an
       // ODP reached any other way, which is the point.
-      'odp.serp_request_id', 'odp.serp_position', 'odp.serp_page_number'
+      'odp.serp_request_id', 'odp.serp_position', 'odp.serp_page_number',
+      // Not from the site: a Tealium extension (huurwoningen and pararius
+      // profiles only) sets it to 'true' when odp.postal_code's four digits fall
+      // in a postcode range list hard-coded in that extension; absent otherwise.
+      'ad_target.univeArea'
     ], labels: {
+      'ad_target.univeArea':  'Postcode in Univé ad-target ranges (extension)',
       'odp.serp_request_id':  'serp.request_id of the SERP that led here',
       'odp.serp_position':    'Card position clicked on that SERP',
       'odp.serp_page_number': 'SERP page the card was on'
@@ -88,8 +93,15 @@
       // is only set when a ranking model ordered the results.
       'serp.request_id', 'serp.ranking_version',
       'serp.result.listing_ids', 'serp.result.agent_ids', 'listing_count',
-      'serp.impression_trigger'
+      'serp.impression_trigger',
+      // Not from the site: a Tealium extension in every web profile cuts the
+      // location slug out of dom.pathname on a SERP, and the Meta, Snap and
+      // TikTok tags send it as their search string (Search.search_string,
+      // search_string, query). Kept here, next to serp.result.search_query, so
+      // the two can be compared on the same hit.
+      'serp_result.location'
     ], labels: {
+      'serp_result.location':    'Location slug (extension) → pixel search string',
       'serp.request_id':         'Result-set id; joins impression, click and ODP',
       'serp.ranking_version':    'Ranking model that ordered the results',
       'serp.result.listing_ids': 'Listing ids shown, comma-separated, in order',
@@ -500,8 +512,10 @@
       'openai.pixel_id', 'openai.event_name', 'openai.value', 'openai.currency',
       'trovit.account_id', 'trovit.country',
       'rtbhouse.taggingHash', 'rtbhouse.*',
-      // Derived by extensions rather than constant, but feeding tags the same way.
-      'serp_result.location', 'ad_target.univeArea', 'subscription.orderId'
+      // Derived per hit rather than constant, but it exists only to feed the
+      // conversion tags. The other two derived values (serp_result.location,
+      // ad_target.univeArea) sit with the page data they are read from.
+      'subscription.orderId'
     ], labels: {
       'meta_pixel.pixelId':          'Meta pixel id this profile fires',
       'meta_pixel.autoConfig':       'Meta automatic configuration on/off',
@@ -540,12 +554,6 @@
       'trovit.country':              'Thribee / Trovit country',
       'rtbhouse.taggingHash':        'RTB House tagging hash',
       'rtbhouse.*':                  'RTB House conversion class / value',
-      // Mapped as Search.search_string (Meta), search_string (Snap) and query
-      // (TikTok): the location slug cut from dom.pathname on a SERP.
-      'serp_result.location':        'SERP location slug → pixel search string',
-      // Huurwoningen/Pararius only: 'true' when odp.postal_code's four digits fall
-      // in a postcode range list hard-coded in the extension; absent otherwise.
-      'ad_target.univeArea':         'ODP postcode inside the Univé ad-target ranges',
       // Platform.affiliate_data.subscription_id, overridden by ?subscription_id=
       // or ?subscribed= on the landing URL.
       'subscription.orderId':        'Subscription id, used as conversion order id'
