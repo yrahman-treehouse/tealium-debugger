@@ -15,8 +15,8 @@
 // A new script applies from the next page load. A page that is already open
 // keeps the version it started with.
 //
-// The toolbar badge is per tab: ON on a site the debugger runs on, OFF on any
-// other. chrome.userScripts only works once the user has switched on "Allow
+// The toolbar icon is per tab: a green T on a site the debugger runs on, a grey
+// T on any other. chrome.userScripts only works once the user has switched on "Allow
 // User Scripts" for this extension (Chrome 138+; Developer mode before that);
 // until then every tab shows a red !, and clicking it opens the settings page.
 'use strict';
@@ -101,28 +101,42 @@ function siteNames(patterns) {
   return patterns.map((p) => (/:\/\/(?:\*\.)?([^/]+)/.exec(p) || [])[1]).filter(Boolean);
 }
 
-// What the toolbar badge should say for one tab. Pure, so it can be tested.
+// What the toolbar icon should show for one tab. Pure, so it can be tested.
 //   available    chrome.userScripts usable ("Allow User Scripts" on)
 //   status       {kind: 'ok'|'upd', title} from the last sync
 //   patterns     the @match patterns this install can actually run on
 //   url          the tab's URL — Chrome only reveals it for sites the
 //                extension has host permission for, so undefined means "not ours"
+//
+// On/off is carried by the ICON, not a badge: the green T where the debugger
+// runs, a grey T everywhere else. Chrome draws badges at a fixed size, and an
+// ON/OFF badge on every tab was bigger than the icon it sat on. A badge is
+// kept only for the two states that need the user to act, and each is one
+// familiar symbol: ! (needs a setting switched on) and ↻ (update available).
+const UPDATE_BADGE = '↻';
 function badgeFor(available, status, patterns, url) {
+  const on = urlMatches(url, patterns);
   if (!available) {
-    return { text: '!', colour: '#e53935',
+    return { text: '!', colour: '#e53935', icon: 'off',
       title: 'Tealium event capture is not running anywhere: switch on "Allow User Scripts" ' +
              'for this extension (click to open its settings).' };
   }
   if (status && status.kind === 'upd') {
-    return { text: 'UPD', colour: '#fb8c00', title: status.title };
+    return { text: UPDATE_BADGE, colour: '#fb8c00', icon: on ? 'on' : 'off',
+      title: 'Update available — click to get it.\n' + status.title };
   }
   const tail = status && status.title ? '\n' + status.title : '';
-  if (urlMatches(url, patterns)) {
-    return { text: 'ON', colour: '#1b7f3b', title: 'Capturing on this site.' + tail };
+  if (on) {
+    return { text: '', colour: '#1b7f3b', icon: 'on', title: 'Capturing on this site.' + tail };
   }
-  return { text: 'OFF', colour: '#616161',
+  return { text: '', colour: '#616161', icon: 'off',
     title: 'Not running on this site. It runs on ' + siteNames(patterns).join(', ') + '.' + tail };
 }
+
+const ICONS = {
+  on:  { 16: 'icons/16.png',     48: 'icons/48.png' },
+  off: { 16: 'icons/off-16.png', 48: 'icons/off-48.png' },
+};
 
 // ── chrome glue ──────────────────────────────────────────────────────────────
 async function userScriptsAvailable() {
@@ -134,8 +148,8 @@ async function userScriptsAvailable() {
   }
 }
 
-// The badge is per tab: ON where the debugger runs, OFF elsewhere, with the
-// install-wide states (! and UPD) taking precedence on every tab.
+// Per tab: green T where the debugger runs, grey T elsewhere, with the
+// install-wide badges (! and ↻) on top of every tab.
 async function paintTab(tab) {
   if (!tab || tab.id == null || tab.id < 0) return;
   const available = await userScriptsAvailable();
@@ -144,6 +158,7 @@ async function paintTab(tab) {
   const patterns = script ? allowedMatches(script.matches, granted).ok : granted;
   const b = badgeFor(available, status, patterns, tab.url);
   try {
+    await chrome.action.setIcon({ tabId: tab.id, path: ICONS[b.icon] });
     await chrome.action.setBadgeText({ tabId: tab.id, text: b.text });
     await chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: b.colour });
     await chrome.action.setBadgeTextColor({ tabId: tab.id, color: '#ffffff' });
@@ -268,7 +283,7 @@ chrome.action.onClicked.addListener(async (tab) => {
   const badge = await chrome.action.getBadgeText({ tabId: tab.id });
   if (badge === '!') {
     chrome.tabs.create({ url: 'chrome://extensions/?id=' + chrome.runtime.id });
-  } else if (badge === 'UPD') {
+  } else if (badge === UPDATE_BADGE) {
     chrome.tabs.create({ url: RELEASES_PAGE });
   } else {
     sync();   // a click is also a manual "check now"

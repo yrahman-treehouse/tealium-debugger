@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.6
+// @version      10.7
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -47,6 +47,10 @@
 // name, value and consent signal" — which is the question a tag audit asks.
 (function () {
   'use strict';
+  // Shown on the TAGS pill while the panel is open. Must equal @version in the
+  // header: the Chrome extension has no GM_info to read it from, so it lives
+  // here too, and extension/build.py (run on every PR) fails if they differ.
+  var VERSION = '10.7';
   // ───────────────────────────────────────────────────────────────────────────
   // CATALOGUE — every attribute the picker offers.
   // Everything here is always CAPTURED; the picker controls what is DISPLAYED
@@ -5649,7 +5653,12 @@
     pill.appendChild(el('span', null, PILL_NAME));
     badgeEl = el('span', 'background:#333;border-radius:999px;padding:2px 7px', '0');
     pill.appendChild(badgeEl);
-    pill.title = 'Tag capture — utag events, what Tealium sent, and vendor pixels.\n' +
+    // The running version, pushed to the right end of the pill. Only while the
+    // panel is open: closed, the pill stays as small as it can be.
+    var versionEl = el('span', 'margin-left:auto;display:none;padding-left:8px;' +
+      'font:600 10px ui-monospace,Menlo,monospace;color:#8f8f8f', 'v' + VERSION);
+    pill.appendChild(versionEl);
+    pill.title = 'Tag capture ' + VERSION + ' — utag events, what Tealium sent, and vendor pixels.\n' +
                  'Click to open, drag to move.';
     wrap.appendChild(pill);
     panelEl = el('div', 'display:none;margin-top:8px;background:#1e1e1e;color:#eee;border-radius:10px;' +
@@ -5912,8 +5921,14 @@
     // Click anywhere outside the widget (or press Escape) to close.
     // composedPath() is used because the widget lives in a shadow root, so
     // e.target from outside reports the host, never the inner element.
+    // The one place the panel opens or closes, so the version on the pill can
+    // never be out of step with it.
+    function setPanelOpen(open) {
+      panelEl.style.display = open ? 'block' : 'none';
+      versionEl.style.display = open ? '' : 'none';
+    }
     function closePanel() {
-      panelEl.style.display = 'none';
+      setPanelOpen(false);
       setDisclosures(null);
     }
     function isOutside(e) {
@@ -5954,7 +5969,7 @@
       if (moved) {
         lsSet(UI_KEY, { right: parseInt(hostEl.style.right, 10), bottom: parseInt(hostEl.style.bottom, 10) });
       } else {
-        panelEl.style.display = (panelEl.style.display === 'none') ? 'block' : 'none';
+        setPanelOpen(panelEl.style.display === 'none');
       }
     }, true);
   }

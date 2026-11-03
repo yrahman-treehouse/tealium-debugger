@@ -29,16 +29,16 @@ It switches to the latest release as soon as its first check runs.
 
 ## Toolbar icon
 
-The badge is worked out per tab. Hover over it for the debugger version and where it came from.
+The icon is worked out per tab. Hover over it for the debugger version and where it came from.
 
-| Badge | Meaning | Click |
+| Icon | Meaning | Click |
 |---|---|---|
-| **ON** (green) | this site is one the debugger runs on, and it is capturing here | check GitHub now |
-| **OFF** (grey) | any other site; the tooltip lists the sites it does run on | check GitHub now |
-| **!** (red) | "Allow User Scripts" is off, so it runs nowhere | opens the extension's settings |
-| **UPD** (orange) | the *extension shell* is behind (see below) | opens the latest release |
+| green **T** | this site is one the debugger runs on, and it is capturing here | check GitHub now |
+| grey **T** | any other site; the tooltip lists the sites it does run on | check GitHub now |
+| red **!** badge | "Allow User Scripts" is off, so it runs nowhere | opens the extension's settings |
+| orange **↻** badge | an update of the extension itself is ready (see below) | opens the latest release |
 
-**!** and **UPD** apply to the whole install, so they replace ON/OFF on every tab until they are resolved.
+A badge only appears when there is something to do, and it applies to every tab until it's resolved.
 
 ## How a release happens
 
@@ -57,7 +57,7 @@ running. The extension also never goes back to an older version.
 Script changes never need a new zip. The shell (`manifest.json`, `background.js`) does, and so does
 **adding a site**: host permissions are fixed at install time, so a new `@match` domain only runs
 after people load a new zip. When the shell changes, bump `extension/SHELL_VERSION` together with
-`@version`. Installs that are behind then show **UPD**. To update, unzip the new release over the old
+`@version`. Installs that are behind then show **↻**. To update, unzip the new release over the old
 folder and click the reload arrow in `chrome://extensions`.
 
 ## Build locally
