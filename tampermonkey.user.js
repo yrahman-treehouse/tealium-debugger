@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.5
+// @version      10.6
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -3006,6 +3006,24 @@
   // glance. Keep new labels at 48 characters or fewer; run
   // __capLabelAudit() in the console to list any that are not.
   var COL_LABEL = 48;
+  // Whole-line ceiling for a table row with a description column. Without it,
+  // a long key plus a long value plus a label ran past the console's width and
+  // the description wrapped onto a line of its own, under the key column
+  // (tealium.collect.dataEnrichment next to the 58-character collect URL did
+  // exactly that). 132 fits a default-width DevTools console docked at the
+  // bottom of a laptop screen. When a row would not fit, the VALUE column gives
+  // way first, down to COL_VALUE_MIN, and only then the description.
+  var LINE_MAX = 132;
+  var COL_VALUE_MIN = 24;
+  // Widths for the value and description columns of one group, so the whole
+  // row stays within LINE_MAX. keyW is never cut (see the note in print()).
+  function columnWidths(keyW, valW, labelLens) {
+    var labW = Math.min(COL_LABEL, Math.max.apply(null, [0].concat(labelLens)));
+    var room = LINE_MAX - (2 + keyW + 2 + 2);       // indent, two gutters
+    var v = Math.max(Math.min(valW, room - labW), Math.min(valW, COL_VALUE_MIN));
+    var l = Math.max(0, Math.min(labW, room - v));
+    return { value: v, label: l };
+  }
   // Pad to width, or cut with an ellipsis when too long.
   function fit(s, n) {
     s = String(s == null ? '' : s);
@@ -3058,7 +3076,11 @@
         return { colour: (v && v.colour) || PILL_VENDOR_FALLBACK,
                  tag: (v && v.tag) || 'PIXEL', ring: false, key: key };
       }
-      return { colour: PILL_BEACON, tag: 'BEACON', ring: false, key: key };
+      // 'SENT', not 'BEACON': VIEW and LINK are what the site ASKED utag to
+      // track; this is what Tealium actually SENT to its servers. The word
+      // carries that contrast without anyone needing to know what a beacon is.
+      // The internal key stays 'beacon', so saved mute settings still apply.
+      return { colour: PILL_BEACON, tag: 'SENT', ring: false, key: key };
     }
     return {
       colour: row._via === 'recovered' ? PILL_RECOVERED
@@ -3121,7 +3143,8 @@
     var out = [
       { key: 'view',    tag: 'VIEW',    colour: PILL_VIEW,    ring: true,  note: 'utag.view calls' },
       { key: 'link',    tag: 'LINK',    colour: PILL_LINK,    ring: true,  note: 'utag.link / track calls' },
-      { key: 'beacon',  tag: 'BEACON',  colour: PILL_BEACON,  ring: false, note: 'Tealium collect beacons' },
+      { key: 'beacon',  tag: 'SENT',    colour: PILL_BEACON,  ring: false,
+        note: 'what Tealium actually sent to its servers (vs. what the site asked for in VIEW/LINK)' },
       { key: 'visitor', tag: 'VISITOR', colour: PILL_VISITOR, ring: false, note: 'Tealium visitor-service lookups' }
     ];
     Object.keys(VENDOR_PILL).forEach(function (ep) {
@@ -3275,10 +3298,20 @@
       var keyW = Math.max.apply(null, present.map(function (k) { return k.length; }));
       var valW = Math.min(COL_VALUE, Math.max.apply(null, vals.map(function (v) { return v.length; })));
       var anyLabel = labelsInline() && present.some(function (k) { return !!labelFor(g, k); });
+      if (anyLabel) {
+        var cw = columnWidths(keyW, valW, present.map(function (k) {
+          return String(labelFor(g, k) || '').length;
+        }));
+        valW = cw.value;
+        var labW = cw.label;
+        // A key so long that not even a short description fits: drop the
+        // column for this group rather than print a few useless characters.
+        if (labW < 12) anyLabel = false;
+      }
       console.log(
         '%c' + g.name + '\n%c' + present.map(function (k, i) {
           var line = '  ' + pad(k, keyW) + '  ' + (anyLabel ? fit(vals[i], valW) : vals[i]);
-          if (anyLabel) line += '  ' + clip(labelFor(g, k), COL_LABEL);
+          if (anyLabel) line += '  ' + clip(labelFor(g, k), labW);
           return line.replace(/\s+$/, '');
         }).join('\n'),
         'color:' + colour + ';font-weight:bold',
@@ -5616,7 +5649,7 @@
     pill.appendChild(el('span', null, PILL_NAME));
     badgeEl = el('span', 'background:#333;border-radius:999px;padding:2px 7px', '0');
     pill.appendChild(badgeEl);
-    pill.title = 'Tag capture — utag events, Tealium beacons and vendor pixels.\n' +
+    pill.title = 'Tag capture — utag events, what Tealium sent, and vendor pixels.\n' +
                  'Click to open, drag to move.';
     wrap.appendChild(pill);
     panelEl = el('div', 'display:none;margin-top:8px;background:#1e1e1e;color:#eee;border-radius:10px;' +
@@ -5729,11 +5762,12 @@
         setSource('disc', v);
         toast(v ? 'Discovering unknown vendors' : 'Discovery paused');
       }, 'Surveys any third-party tracking endpoint not in the catalogue');
-    var labOpt = optionRow('Explain fields inline', labelsInline,
+    var labOpt = optionRow('Show descriptions column', labelsInline,
       function (v) {
         setLabelsInline(v);
-        toast(v ? 'Explaining fields inline' : 'Explanations off — use __capExplain()');
-      }, 'Adds the meaning of each parameter as a third column');
+        toast(v ? 'Descriptions on for new events' : 'Descriptions off for new events');
+      }, 'Adds what each attribute means as a third column in the console. ' +
+         'Applies to events printed from now on; lines already in the console cannot change.');
     renderLabelToggle = function () { labOpt.cb.checked = labelsInline(); };
     var hr1 = el('div');
     hr1.className = 'cap-hr';
