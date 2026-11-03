@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Build the Chrome extension from tampermonkey.user.js.
+"""Build the Chrome extension shell that runs tampermonkey.user.js.
 
-The userscript stays the single source. This reads its header (@name, @version,
-@match, @run-at) and writes an unpacked MV3 extension plus a zip ready for the
-Chrome Web Store:
+The extension is a LOADER, not a copy of the debugger. It ships the current
+userscript only as a seed, so it works offline from the first page load. After
+that, background.js fetches the userscript from the repo's latest GitHub release
+and registers it through chrome.userScripts, so script changes reach every
+install without rebuilding or reinstalling the extension.
 
-    dist/extension/                       load this with "Load unpacked"
-    dist/tealium-debugger-<version>.zip   upload this to the Web Store
+    dist/extension/                            load this with "Load unpacked"
+    dist/tealium-debugger-extension-<v>.zip    the same, zipped, for a release
+
+The shell has its own version (extension/SHELL_VERSION). Bump it only when the
+shell itself changes: manifest, background.js, or a new site in @match (host
+permissions are fixed at install time, so a new domain needs a new shell).
 
 Standard library only. Run from anywhere:  python3 extension/build.py
-Prints the version on stdout, and appends version=/zip= to $GITHUB_OUTPUT when
-that is set (the release workflow reads them).
+Prints "<shell version> <script version>", and appends shell=, script= and zip=
+to $GITHUB_OUTPUT when that is set (the release workflow reads them).
 """
 import json
 import os
@@ -27,14 +33,10 @@ HERE = os.path.join(ROOT, 'extension')
 DIST = os.path.join(ROOT, 'dist')
 OUT = os.path.join(DIST, 'extension')
 
-# The Web Store caps the manifest description at 132 characters, and the
-# userscript's own @description is far longer, so the extension has its own.
-DESCRIPTION = ('Logs utag events, Tealium beacons and the vendor pixels they fire on '
-               'Treehouse sites, with a field picker and JSON/CSV export.')
+DESCRIPTION = ('Runs the Treehouse Tealium debugger and keeps it current from GitHub: '
+               'utag events, Tealium beacons and the vendor pixels they fire.')
 assert len(DESCRIPTION) <= 132, len(DESCRIPTION)
-
-RUN_AT = {'document-start': 'document_start', 'document-end': 'document_end',
-          'document-idle': 'document_idle', 'document-body': 'document_end'}
+VERSION_RE = r'(0|[1-9]\d{0,4})(\.(0|[1-9]\d{0,4})){0,3}'
 
 
 def header(src):
@@ -50,10 +52,10 @@ def header(src):
     return out
 
 
-def chrome_version(v):
+def valid_version(v, what):
     # Chrome takes 1-4 dot-separated integers, each 0-65535, no leading zeros.
-    if not re.fullmatch(r'(0|[1-9]\d{0,4})(\.(0|[1-9]\d{0,4})){0,3}', v):
-        sys.exit('@version %r is not a valid Chrome extension version' % v)
+    if not re.fullmatch(VERSION_RE, v):
+        sys.exit('%s %r is not a valid Chrome extension version' % (what, v))
     return v
 
 
@@ -97,11 +99,12 @@ def main():
     with open(SRC, encoding='utf-8') as f:
         src = f.read()
     h = header(src)
-    version = chrome_version(h['version'][0])
+    script_version = valid_version(h['version'][0], '@version')
+    with open(os.path.join(HERE, 'SHELL_VERSION'), encoding='utf-8') as f:
+        shell_version = valid_version(f.read().strip(), 'SHELL_VERSION')
     matches = h.get('match', [])
     if not matches:
         sys.exit('no @match lines in the userscript header')
-    run_at = RUN_AT.get(h.get('run-at', ['document-idle'])[0], 'document_idle')
 
     shutil.rmtree(OUT, ignore_errors=True)
     os.makedirs(os.path.join(OUT, 'icons'))
@@ -110,43 +113,37 @@ def main():
         'manifest_version': 3,
         'name': h['name'][0],
         'short_name': 'Tealium capture',
-        'version': version,
+        'version': shell_version,
         'description': DESCRIPTION,
         'homepage_url': 'https://github.com/yrahman-treehouse/tealium-debugger',
-        # world: MAIN needs 111. The script hooks utag, fetch and XHR on the
-        # page itself, exactly as Tampermonkey's @grant none runs it, and reads
-        # the page's own localStorage, so captures and ticks carry over.
-        'minimum_chrome_version': '111',
+        # chrome.userScripts with world MAIN. From 138 it is switched on per
+        # extension by the "Allow User Scripts" toggle; before that by
+        # Developer mode, which an unpacked install has on anyway.
+        'minimum_chrome_version': '120',
         'icons': {s: 'icons/%s.png' % s for s in ('16', '48', '128')},
         'action': {
-            'default_title': 'Tealium event capture %s' % version,
+            'default_title': 'Tealium event capture',
             'default_icon': {s: 'icons/%s.png' % s for s in ('16', '48')},
         },
         'background': {'service_worker': 'background.js'},
-        # alarms: the periodic GitHub version check. Nothing else is needed:
-        # the raw GitHub URL sends Access-Control-Allow-Origin: *, and opening
-        # a tab from the toolbar button needs no permission.
-        'permissions': ['alarms'],
-        'content_scripts': [{
-            'matches': matches,
-            'js': ['content.js'],
-            'run_at': run_at,
-            'world': 'MAIN',
-            # Tampermonkey runs a userscript without @noframes in every
-            # matching frame; keep that behaviour identical.
-            'all_frames': True,
-        }],
+        # userScripts: run the debugger. storage: keep the last good script.
+        # alarms: the periodic GitHub check. The GitHub API and raw hosts send
+        # Access-Control-Allow-Origin: *, so they need no host permission.
+        'permissions': ['userScripts', 'storage', 'alarms'],
+        # The sites the debugger may run on, read from @match at build time.
+        # A script fetched later can narrow this list but never widen it.
+        'host_permissions': matches,
     }
     with open(os.path.join(OUT, 'manifest.json'), 'w', encoding='utf-8') as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
         f.write('\n')
-    shutil.copyfile(SRC, os.path.join(OUT, 'content.js'))
+    shutil.copyfile(SRC, os.path.join(OUT, 'seed.user.js'))
     shutil.copyfile(os.path.join(HERE, 'background.js'), os.path.join(OUT, 'background.js'))
     for s in (16, 48, 128):
         with open(os.path.join(OUT, 'icons', '%d.png' % s), 'wb') as f:
             f.write(icon(s))
 
-    zip_path = os.path.join(DIST, 'tealium-debugger-%s.zip' % version)
+    zip_path = os.path.join(DIST, 'tealium-debugger-extension-%s.zip' % shell_version)
     if os.path.exists(zip_path):
         os.remove(zip_path)
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -155,11 +152,12 @@ def main():
                 full = os.path.join(base, name)
                 z.write(full, os.path.relpath(full, OUT))
 
-    print(version)
+    print(shell_version, script_version)
     gh_out = os.environ.get('GITHUB_OUTPUT')
     if gh_out:
         with open(gh_out, 'a', encoding='utf-8') as f:
-            f.write('version=%s\nzip=%s\n' % (version, os.path.relpath(zip_path, ROOT)))
+            f.write('shell=%s\nscript=%s\nzip=%s\n'
+                    % (shell_version, script_version, os.path.relpath(zip_path, ROOT)))
 
 
 if __name__ == '__main__':
