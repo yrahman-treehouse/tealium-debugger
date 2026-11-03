@@ -140,7 +140,9 @@ def main():
         # userScripts: run the debugger. storage: keep the last good script.
         # alarms: the periodic GitHub check. The GitHub API and raw hosts send
         # Access-Control-Allow-Origin: *, so they need no host permission.
-        'permissions': ['userScripts', 'storage', 'alarms'],
+        # downloads: the ↻ click fetches the new extension zip and shows it in
+        # Finder, since an unpacked extension cannot replace its own files.
+        'permissions': ['userScripts', 'storage', 'alarms', 'downloads'],
         # The sites the debugger may run on, read from @match at build time.
         # A script fetched later can narrow this list but never widen it.
         'host_permissions': matches,
