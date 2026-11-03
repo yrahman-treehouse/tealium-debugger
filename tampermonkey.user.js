@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.4
+// @version      10.5
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -443,6 +443,11 @@
       // linkedin_event_id_<conversionId>_<tag UID>. A page view has no
       // conversionId, hence the double underscore in linkedin_event_id__84.
       'linkedin_event_id_*',
+      // The TikTok and Snap tag templates do the same (huurwoningen-nl only so
+      // far). TikTok writes two per event, tiktok_event_id_<Event> and
+      // tiktok_event_id_<Event>_<tag UID>; Snap writes snap_event_id_<EVENT>_<tag
+      // UID> and sends that same value as the pixel's client_dedup_id.
+      'tiktok_event_id_*', 'snap_event_id_*',
       // Snapchat and TikTok pixel cookies, mapped as Cookie data sources.
       'cp._scid', 'cp._scid_r',
       'cp._ttp', 'cp._tt_enable_cookie', 'cp.ttcsid', 'cp.ttcsid_*',
@@ -455,6 +460,8 @@
     ], labels: {
       'fb_event_id_*': 'Meta event id for pixel/CAPI dedupe (per tag)',
       'linkedin_event_id_*': 'LinkedIn event id for dedupe (conversion + tag)',
+      'tiktok_event_id_*':   'TikTok event id for pixel/API dedupe (per event)',
+      'snap_event_id_*':     'Snap event id = client_dedup_id (event + tag)',
       'cp._scid':            'Snap browser id (sent as u_c1)',
       // Snap documents _scid_r only as a pixel cookie alongside _scid; what the
       // _r copy adds is not documented, so the label says no more than that.
@@ -1643,6 +1650,8 @@
   // 10.2: three more keys a live capture showed as Uncatalogued. Same rule as
   // 10.0: visible before they had a name, so ticked everywhere.
   var TICKED_10_2 = ['odp.postal_code', 'odp.listingIdShort', 'ad_slot'];
+  // 10.5: the TikTok and Snap per-tag event ids, visible as uncatalogued.
+  var TICKED_10_5 = ['tiktok_event_id_*', 'snap_event_id_*'];
   // Ticked on first run.
   var DEFAULT_ON = [
     'tealium_event', 'page_category', 'page_currency',
@@ -1687,7 +1696,7 @@
     'qp.utm_source', 'qp.utm_medium', 'qp.utm_campaign', 'qp.utm_term',
     'qp.utm_content', 'qp.utm_id', 'qp.utm_source_platform',
     'qp.utm_creative_format', 'qp.utm_marketing_tactic'
-  ].concat(TICKED_10_0, TICKED_10_2, [
+  ].concat(TICKED_10_0, TICKED_10_2, TICKED_10_5, [
     // Everything below this point is derived, not listed — see wireDefaults().
     'event', 'reddit_pixel_event_id_*', 'fb_event_id_*',
     'tci.event_id'
@@ -2520,6 +2529,7 @@
     return out;
   })()) });
   MIGRATIONS.push({ v: '10.2', keys: TICKED_10_2 });
+  MIGRATIONS.push({ v: '10.5', keys: TICKED_10_5 });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
   // Clear between test runs.
