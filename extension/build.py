@@ -74,9 +74,15 @@ def png(size, draw):
             + chunk(b'IEND', b''))
 
 
-def icon(size):
+def icon(size, off=False):
     # The console's utag.view green (PILL_VIEW) with a white "T", rounded corners.
-    green, white, clear = (0x1b, 0x7f, 0x3b, 255), (255, 255, 255, 255), (0, 0, 0, 0)
+    # The off variant is the same T in muted grey: the toolbar shows it on every
+    # site the debugger does not run on, so the icon itself says on/off without
+    # a badge.
+    white, clear = (255, 255, 255, 255), (0, 0, 0, 0)
+    green = (0x6b, 0x6b, 0x6b, 255) if off else (0x1b, 0x7f, 0x3b, 255)
+    if off:
+        white = (0xd0, 0xd0, 0xd0, 255)
     r = size * 0.18
 
     def draw(x, y):
@@ -100,6 +106,11 @@ def main():
         src = f.read()
     h = header(src)
     script_version = valid_version(h['version'][0], '@version')
+    # The pill shows VERSION from inside the script; it must match the header.
+    vm = re.search(r"^\s*var VERSION = '([^']*)';", src, re.M)
+    if not vm or vm.group(1) != script_version:
+        sys.exit("var VERSION = '%s' in tampermonkey.user.js does not match @version %s; "
+                 "bump both together" % (vm.group(1) if vm else '<missing>', script_version))
     with open(os.path.join(HERE, 'SHELL_VERSION'), encoding='utf-8') as f:
         shell_version = valid_version(f.read().strip(), 'SHELL_VERSION')
     matches = h.get('match', [])
@@ -142,6 +153,9 @@ def main():
     for s in (16, 48, 128):
         with open(os.path.join(OUT, 'icons', '%d.png' % s), 'wb') as f:
             f.write(icon(s))
+    for s in (16, 48):           # toolbar sizes only; see icon(off=True)
+        with open(os.path.join(OUT, 'icons', 'off-%d.png' % s), 'wb') as f:
+            f.write(icon(s, off=True))
 
     zip_path = os.path.join(DIST, 'tealium-debugger-extension-%s.zip' % shell_version)
     if os.path.exists(zip_path):
