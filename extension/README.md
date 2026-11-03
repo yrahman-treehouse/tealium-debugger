@@ -36,7 +36,7 @@ The icon is worked out per tab. Hover over it for the debugger version and where
 | green **T** | this site is one the debugger runs on, and it is capturing here | check GitHub now |
 | grey **T** | any other site; the tooltip lists the sites it does run on | check GitHub now |
 | red **!** badge | "Allow User Scripts" is off, so it runs nowhere | opens the extension's settings |
-| orange **↻** badge | an update of the extension itself is ready (see below) | opens the latest release |
+| orange **↻** badge | an update of the extension itself is ready (see below) | downloads it and opens this extension's page |
 
 A badge only appears when there is something to do, and it applies to every tab until it's resolved.
 
@@ -57,8 +57,13 @@ running. The extension also never goes back to an older version.
 Script changes never need a new zip. The shell (`manifest.json`, `background.js`) does, and so does
 **adding a site**: host permissions are fixed at install time, so a new `@match` domain only runs
 after people load a new zip. When the shell changes, bump `extension/SHELL_VERSION` together with
-`@version`. Installs that are behind then show **↻**. To update, unzip the new release over the old
-folder and click the reload arrow in `chrome://extensions`.
+`@version`. Installs that are behind then show **↻**.
+
+To update, click **↻**. The extension downloads the new zip, shows it in Finder, and opens its own
+page in `chrome://extensions`. Unzip the download over the extension's folder, then press **Update**
+on that page. The extension can't do the unzip step itself, because an unpacked extension can't
+replace its own files. Settings, site access and the extension id all stay, because it's the same
+folder.
 
 ## Build locally
 

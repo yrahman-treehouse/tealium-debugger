@@ -123,7 +123,8 @@ function badgeFor(available, status, patterns, url) {
   }
   if (status && status.kind === 'upd') {
     return { text: UPDATE_BADGE, colour: '#fb8c00', icon: on ? 'on' : 'off',
-      title: 'Update available — click to get it.\n' + status.title };
+      title: 'Update available — click to download it. Then unzip it over this ' +
+             "extension's folder and press Update on the page that opens.\n" + status.title };
   }
   const tail = status && status.title ? '\n' + status.title : '';
   if (on) {
@@ -137,6 +138,14 @@ const ICONS = {
   on:  { 16: 'icons/16.png',     48: 'icons/48.png' },
   off: { 16: 'icons/off-16.png', 48: 'icons/off-48.png' },
 };
+
+// The extension zip among a GitHub release's assets, or null. The release
+// workflow attaches it as tealium-debugger-extension-<shell version>.zip.
+function pickExtensionZip(assets) {
+  const a = (assets || []).find((x) =>
+    /^tealium-debugger-extension-[\d.]+\.zip$/.test(x && x.name || ''));
+  return a ? { name: a.name, url: a.browser_download_url } : null;
+}
 
 // ── chrome glue ──────────────────────────────────────────────────────────────
 async function userScriptsAvailable() {
@@ -173,8 +182,8 @@ async function paintAll() {
   await Promise.all(tabs.map(paintTab));
 }
 
-async function setStatus(kind, title) {
-  await chrome.storage.local.set({ status: { kind, title } });
+async function setStatus(kind, title, zip) {
+  await chrome.storage.local.set({ status: { kind, title, zip: zip || null } });
   await paintAll();
 }
 
@@ -210,7 +219,9 @@ async function latestRelease() {
     headers: { Accept: 'application/vnd.github+json' } });
   if (res.status === 404) return null;              // no release yet
   if (!res.ok) throw new Error('GitHub API ' + res.status);
-  const tag = (await res.json()).tag_name;
+  const release = await res.json();
+  const tag = release.tag_name;
+  const zip = pickExtensionZip(release.assets);
   const code = await (await fetch(RAW(tag, 'tampermonkey.user.js'), { cache: 'no-store' })).text();
   const script = parseUserscript(code);
   if (!script) throw new Error('release ' + tag + ' has no readable userscript');
@@ -220,7 +231,7 @@ async function latestRelease() {
     const r = await fetch(RAW(tag, 'extension/SHELL_VERSION'), { cache: 'no-store' });
     if (r.ok) shell = (await r.text()).trim();
   } catch (e) {}
-  return { script, shell };
+  return { script, shell, zip };
 }
 
 let running = null;
@@ -241,8 +252,10 @@ async function doSync() {
   let dropped = await register(script);     // registrations do not survive an extension update
   let note = '';
   let shellBehind = false;
+  let zip = null;
   try {
     const rel = await latestRelease();
+    if (rel) zip = rel.zip;
     if (rel && newer(rel.script.version, script.version)) {
       dropped = await register(rel.script);   // register first: store only what is running
       await chrome.storage.local.set({ script: rel.script });
@@ -257,8 +270,8 @@ async function doSync() {
   if (shellBehind || dropped.length) {
     await setStatus('upd',
       'Debugger ' + script.version + ' is running, but the extension itself (' + shellVersion +
-      ') needs updating' + (dropped.length ? ' to cover ' + dropped.join(', ') : '') +
-      '. Click to open the release, then load the new zip.' + note);
+      ') needs updating' + (dropped.length ? ' to cover ' + dropped.join(', ') : '') + '.' + note,
+      zip);
     return;
   }
   await setStatus('ok', 'Debugger ' + script.version +
@@ -279,12 +292,41 @@ chrome.runtime.onInstalled.addListener(sync);
 chrome.runtime.onStartup.addListener(sync);
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) sync(); });
 
+const EXTENSIONS_PAGE = () => 'chrome://extensions/?id=' + chrome.runtime.id;
+
+// ↻ clicked: an unpacked extension cannot replace its own files, so this does
+// everything up to that point. It downloads the new zip, shows it in Finder
+// once it has arrived, and opens this extension's page, where Update reloads
+// it from its folder after the zip has been unzipped over it. Without a zip
+// URL (an older release without one) it falls back to the release page.
+async function startUpdate() {
+  const { status } = await chrome.storage.local.get('status');
+  const zip = status && status.zip;
+  if (!zip) {
+    chrome.tabs.create({ url: RELEASES_PAGE });
+    return;
+  }
+  try {
+    const id = await chrome.downloads.download({ url: zip.url, filename: zip.name,
+      conflictAction: 'overwrite' });
+    const done = (delta) => {
+      if (delta.id !== id || !delta.state) return;
+      if (delta.state.current === 'complete') chrome.downloads.show(id);
+      if (delta.state.current !== 'in_progress') chrome.downloads.onChanged.removeListener(done);
+    };
+    chrome.downloads.onChanged.addListener(done);
+  } catch (e) {
+    chrome.tabs.create({ url: RELEASES_PAGE });   // download refused: let the user fetch it
+  }
+  chrome.tabs.create({ url: EXTENSIONS_PAGE() });
+}
+
 chrome.action.onClicked.addListener(async (tab) => {
   const badge = await chrome.action.getBadgeText({ tabId: tab.id });
   if (badge === '!') {
-    chrome.tabs.create({ url: 'chrome://extensions/?id=' + chrome.runtime.id });
+    chrome.tabs.create({ url: EXTENSIONS_PAGE() });
   } else if (badge === UPDATE_BADGE) {
-    chrome.tabs.create({ url: RELEASES_PAGE });
+    startUpdate();
   } else {
     sync();   // a click is also a manual "check now"
   }
