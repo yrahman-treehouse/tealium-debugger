@@ -103,7 +103,8 @@ function siteNames(patterns) {
 
 // What the toolbar icon should show for one tab. Pure, so it can be tested.
 //   available    chrome.userScripts usable ("Allow User Scripts" on)
-//   status       {kind: 'ok'|'upd', title} from the last sync
+//   status       from the last sync: {kind: 'ok'|'upd', version, source,
+//                checkError, newSites, zip}
 //   patterns     the @match patterns this install can actually run on
 //   url          the tab's URL — Chrome only reveals it for sites the
 //                extension has host permission for, so undefined means "not ours"
@@ -114,24 +115,44 @@ function siteNames(patterns) {
 // kept only for the two states that need the user to act, and each is one
 // familiar symbol: ! (needs a setting switched on) and ↻ (update available).
 const UPDATE_BADGE = '↻';
+const NAME = 'Tealium event capture';
+
+// The tooltip's second line: which version runs, and whether that is known to
+// be current. Says plainly when it could not check, rather than implying
+// "up to date".
+function versionLine(status) {
+  if (!status || !status.version) return '';
+  const v = 'Version ' + status.version + (status.source === 'bundled' ? ' (built-in copy)' : '');
+  if (status.checkError) return v + ' · couldn’t check for updates';
+  return status.kind === 'ok' ? v + ' · up to date' : v;
+}
+
+// Tooltip: line 1 names the tool and its state here, the next line or two say
+// what that means or what to do. Chrome adds its own "Has access to this site".
 function badgeFor(available, status, patterns, url) {
   const on = urlMatches(url, patterns);
+  const ver = versionLine(status);
+  const lines = (a) => a.filter(Boolean).join('\n');
   if (!available) {
-    return { text: '!', colour: '#e53935', icon: 'off',
-      title: 'Tealium event capture is not running anywhere: switch on "Allow User Scripts" ' +
-             'for this extension (click to open its settings).' };
+    return { text: '!', colour: '#e53935', icon: 'off', title: lines([
+      NAME + ' is switched off',
+      'Click here, then turn on “Allow User Scripts”.']) };
   }
   if (status && status.kind === 'upd') {
-    return { text: UPDATE_BADGE, colour: '#fb8c00', icon: on ? 'on' : 'off',
-      title: 'Update available — click to download it. Then unzip it over this ' +
-             "extension's folder and press Update on the page that opens.\n" + status.title };
+    const sites = status.newSites && status.newSites.length
+      ? 'Needed to run on ' + siteNames(status.newSites).join(', ') + '.' : '';
+    return { text: UPDATE_BADGE, colour: '#fb8c00', icon: on ? 'on' : 'off', title: lines([
+      NAME + ': update ready — click to download it',
+      'Then unzip it over the extension’s folder and press Update.',
+      sites, ver]) };
   }
-  const tail = status && status.title ? '\n' + status.title : '';
   if (on) {
-    return { text: '', colour: '#1b7f3b', icon: 'on', title: 'Capturing on this site.' + tail };
+    return { text: '', colour: '#1b7f3b', icon: 'on', title: lines([
+      NAME + ' is on for this site', ver]) };
   }
-  return { text: '', colour: '#616161', icon: 'off',
-    title: 'Not running on this site. It runs on ' + siteNames(patterns).join(', ') + '.' + tail };
+  return { text: '', colour: '#616161', icon: 'off', title: lines([
+    NAME + ' doesn’t run on this site',
+    'It runs on ' + siteNames(patterns).join(', ') + '.', ver]) };
 }
 
 const ICONS = {
@@ -182,8 +203,9 @@ async function paintAll() {
   await Promise.all(tabs.map(paintTab));
 }
 
-async function setStatus(kind, title, zip) {
-  await chrome.storage.local.set({ status: { kind, title, zip: zip || null } });
+// Facts only; badgeFor() turns them into words.
+async function setStatus(status) {
+  await chrome.storage.local.set({ status });
   await paintAll();
 }
 
@@ -250,7 +272,7 @@ async function doSync() {
 
   let script = await stored();
   let dropped = await register(script);     // registrations do not survive an extension update
-  let note = '';
+  let checkError = null;
   let shellBehind = false;
   let zip = null;
   try {
@@ -263,19 +285,17 @@ async function doSync() {
     }
     if (rel && rel.shell && newer(rel.shell, chrome.runtime.getManifest().version)) shellBehind = true;
   } catch (e) {
-    note = ' (GitHub check failed: ' + e.message + '; still running the last good version)';
+    checkError = e.message;   // the last good version keeps running
   }
 
-  const shellVersion = chrome.runtime.getManifest().version;
-  if (shellBehind || dropped.length) {
-    await setStatus('upd',
-      'Debugger ' + script.version + ' is running, but the extension itself (' + shellVersion +
-      ') needs updating' + (dropped.length ? ' to cover ' + dropped.join(', ') : '') + '.' + note,
-      zip);
-    return;
-  }
-  await setStatus('ok', 'Debugger ' + script.version +
-    ' from ' + script.source + ', extension ' + shellVersion + note);
+  await setStatus({
+    kind: shellBehind || dropped.length ? 'upd' : 'ok',
+    version: script.version,
+    source: script.source,
+    checkError,
+    newSites: dropped,
+    zip,
+  });
 }
 
 // Repaint as the user moves between tabs and sites. Without the "tabs"
