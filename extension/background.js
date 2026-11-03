@@ -15,9 +15,10 @@
 // A new script applies from the next page load. A page that is already open
 // keeps the version it started with.
 //
-// chrome.userScripts only works once the user has switched on "Allow User
-// Scripts" for this extension (Chrome 138+; Developer mode before that). Until
-// then the toolbar icon shows OFF, and clicking it opens the settings page.
+// The toolbar badge is per tab: ON on a site the debugger runs on, OFF on any
+// other. chrome.userScripts only works once the user has switched on "Allow
+// User Scripts" for this extension (Chrome 138+; Developer mode before that);
+// until then every tab shows a red !, and clicking it opens the settings page.
 'use strict';
 
 const REPO = 'yrahman-treehouse/tealium-debugger';
@@ -72,6 +73,57 @@ function allowedMatches(matches, granted) {
   return { ok, dropped: matches.filter((p) => granted.indexOf(p) < 0) };
 }
 
+// Chrome match pattern -> RegExp, for deciding whether a tab is a site the
+// debugger runs on. '*.example.com' also matches example.com itself, exactly as
+// Chrome reads it; a pattern without a port matches any port.
+function patternToRegExp(p) {
+  const esc = (s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+  const m = /^(\*|https?|wss?|file|ftp):\/\/(\*|\*\.[^/*]+|[^/*]*)(\/.*)$/.exec(p);
+  if (!m) return null;
+  const scheme = m[1] === '*' ? 'https?' : m[1];
+  const host = m[2] === '*' ? '[^/]*'
+    : m[2].indexOf('*.') === 0 ? '(?:[^/]*\\.)?' + esc(m[2].slice(2))
+    : esc(m[2]);
+  const path = m[3].split('*').map(esc).join('.*');
+  return new RegExp('^' + scheme + ':\\/\\/' + host + '(?::\\d+)?' + path + '$', 'i');
+}
+
+function urlMatches(url, patterns) {
+  if (!url) return false;
+  return patterns.some((p) => {
+    const re = patternToRegExp(p);
+    return !!re && re.test(url);
+  });
+}
+
+// '*://*.pararius.nl/*' -> 'pararius.nl', for the tooltip.
+function siteNames(patterns) {
+  return patterns.map((p) => (/:\/\/(?:\*\.)?([^/]+)/.exec(p) || [])[1]).filter(Boolean);
+}
+
+// What the toolbar badge should say for one tab. Pure, so it can be tested.
+//   available    chrome.userScripts usable ("Allow User Scripts" on)
+//   status       {kind: 'ok'|'upd', title} from the last sync
+//   patterns     the @match patterns this install can actually run on
+//   url          the tab's URL — Chrome only reveals it for sites the
+//                extension has host permission for, so undefined means "not ours"
+function badgeFor(available, status, patterns, url) {
+  if (!available) {
+    return { text: '!', colour: '#e53935',
+      title: 'Tealium event capture is not running anywhere: switch on "Allow User Scripts" ' +
+             'for this extension (click to open its settings).' };
+  }
+  if (status && status.kind === 'upd') {
+    return { text: 'UPD', colour: '#fb8c00', title: status.title };
+  }
+  const tail = status && status.title ? '\n' + status.title : '';
+  if (urlMatches(url, patterns)) {
+    return { text: 'ON', colour: '#1b7f3b', title: 'Capturing on this site.' + tail };
+  }
+  return { text: 'OFF', colour: '#616161',
+    title: 'Not running on this site. It runs on ' + siteNames(patterns).join(', ') + '.' + tail };
+}
+
 // ── chrome glue ──────────────────────────────────────────────────────────────
 async function userScriptsAvailable() {
   try {
@@ -82,10 +134,33 @@ async function userScriptsAvailable() {
   }
 }
 
-async function setState(badge, colour, title) {
-  await chrome.action.setBadgeText({ text: badge });
-  if (badge) await chrome.action.setBadgeBackgroundColor({ color: colour });
-  await chrome.action.setTitle({ title });
+// The badge is per tab: ON where the debugger runs, OFF elsewhere, with the
+// install-wide states (! and UPD) taking precedence on every tab.
+async function paintTab(tab) {
+  if (!tab || tab.id == null || tab.id < 0) return;
+  const available = await userScriptsAvailable();
+  const { status, script } = await chrome.storage.local.get(['status', 'script']);
+  const granted = chrome.runtime.getManifest().host_permissions || [];
+  const patterns = script ? allowedMatches(script.matches, granted).ok : granted;
+  const b = badgeFor(available, status, patterns, tab.url);
+  try {
+    await chrome.action.setBadgeText({ tabId: tab.id, text: b.text });
+    await chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: b.colour });
+    await chrome.action.setBadgeTextColor({ tabId: tab.id, color: '#ffffff' });
+    await chrome.action.setTitle({ tabId: tab.id, title: b.title });
+  } catch (e) {
+    // The tab closed while we were working it out.
+  }
+}
+
+async function paintAll() {
+  const tabs = await chrome.tabs.query({});
+  await Promise.all(tabs.map(paintTab));
+}
+
+async function setStatus(kind, title) {
+  await chrome.storage.local.set({ status: { kind, title } });
+  await paintAll();
 }
 
 async function stored() {
@@ -142,9 +217,7 @@ function sync() {           // one at a time; overlapping triggers share a run
 async function doSync() {
   if (!(await userScriptsAvailable())) {
     chrome.alarms.create(ALARM, { periodInMinutes: WHILE_OFF_MINUTES });
-    await setState('OFF', '#e53935',
-      'Tealium event capture is OFF: switch on "Allow User Scripts" for this ' +
-      'extension (click to open its settings).');
+    await paintAll();     // badgeFor() shows '!' on every tab
     return;
   }
   chrome.alarms.create(ALARM, { periodInMinutes: EVERY_MINUTES });
@@ -167,23 +240,33 @@ async function doSync() {
 
   const shellVersion = chrome.runtime.getManifest().version;
   if (shellBehind || dropped.length) {
-    await setState('UPD', '#fb8c00',
+    await setStatus('upd',
       'Debugger ' + script.version + ' is running, but the extension itself (' + shellVersion +
       ') needs updating' + (dropped.length ? ' to cover ' + dropped.join(', ') : '') +
       '. Click to open the release, then load the new zip.' + note);
     return;
   }
-  await setState('', '', 'Tealium event capture: debugger ' + script.version +
+  await setStatus('ok', 'Debugger ' + script.version +
     ' from ' + script.source + ', extension ' + shellVersion + note);
 }
+
+// Repaint as the user moves between tabs and sites. Without the "tabs"
+// permission Chrome still fires these, and still hands over the URL for the
+// sites this extension has access to — which is exactly the ON set.
+chrome.tabs.onActivated.addListener(({ tabId }) => {
+  chrome.tabs.get(tabId).then(paintTab).catch(() => {});
+});
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.url || info.status) paintTab(tab);
+});
 
 chrome.runtime.onInstalled.addListener(sync);
 chrome.runtime.onStartup.addListener(sync);
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === ALARM) sync(); });
 
-chrome.action.onClicked.addListener(async () => {
-  const badge = await chrome.action.getBadgeText({});
-  if (badge === 'OFF') {
+chrome.action.onClicked.addListener(async (tab) => {
+  const badge = await chrome.action.getBadgeText({ tabId: tab.id });
+  if (badge === '!') {
     chrome.tabs.create({ url: 'chrome://extensions/?id=' + chrome.runtime.id });
   } else if (badge === 'UPD') {
     chrome.tabs.create({ url: RELEASES_PAGE });

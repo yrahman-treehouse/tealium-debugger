@@ -22,18 +22,23 @@ captures, ticks and settings carry over.
 2. Open `chrome://extensions`, turn on **Developer mode**, choose **Load unpacked**, and pick the folder.
 3. Click **Details** on the extension and switch on **Allow User Scripts**. Chrome 138+ requires
    this per extension; before 138, Developer mode covers it. Until you do, the toolbar icon shows
-   **OFF**, and clicking it opens this page.
+   a red **!**, and clicking it opens this page.
 
 The extension ships with the script as it was at build time, so it works from the first page load.
 It switches to the latest release as soon as its first check runs.
 
 ## Toolbar icon
 
+The badge is worked out per tab. Hover over it for the debugger version and where it came from.
+
 | Badge | Meaning | Click |
 |---|---|---|
-| *(none)* | running; hover for the debugger version and where it came from | check GitHub now |
-| **OFF** | "Allow User Scripts" is off, so nothing runs | opens the extension's settings |
-| **UPD** | the *extension shell* is behind (see below) | opens the latest release |
+| **ON** (green) | this site is one the debugger runs on, and it is capturing here | check GitHub now |
+| **OFF** (grey) | any other site; the tooltip lists the sites it does run on | check GitHub now |
+| **!** (red) | "Allow User Scripts" is off, so it runs nowhere | opens the extension's settings |
+| **UPD** (orange) | the *extension shell* is behind (see below) | opens the latest release |
+
+**!** and **UPD** apply to the whole install, so they replace ON/OFF on every tab until they are resolved.
 
 ## How a release happens
 
