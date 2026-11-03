@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.1
+// @version      10.2
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -59,8 +59,14 @@
     ]},
     { name: 'Interaction', keys: [
       'component_name', 'element_type', 'element_text',
-      'interaction_id', 'interaction_type', 'destination_url'
-    ]},
+      'interaction_id', 'interaction_type', 'destination_url',
+      // Set by TealiumAdViewability.js on the ad_unit impression beacon, which
+      // fires when GPT reports a slot as viewable (impressionViewable): the slot's
+      // element id, e.g. hw-serp-…. The ad-unit path rides in element_text.
+      'ad_slot'
+    ], labels: {
+      'ad_slot': 'GPT slot id on the ad_unit viewable impression'
+    }},
     { name: 'Listing (ODP)', keys: [
       'odp.listing_id_short', 'odp.listing_id', 'odp.property', 'odp.title', 'odp.city',
       'odp.offer', 'odp.price_pcm', 'odp.price_pw', 'odp.rooms', 'odp.bedrooms',
@@ -69,6 +75,14 @@
       // same reason as the tenant profile: the names are the description.
       'odp.floor_space', 'odp.construction_type', 'odp.construction_year',
       'odp.upkeep', 'odp.energy_rating',
+      // OdpContext.php: uppercased, spaces removed (1234AB). Also what the
+      // ad_target.univeArea extension below reads.
+      'odp.postal_code',
+      // Not from the site: a Tealium extension in every web profile copies the
+      // part of odp.listing_id before the first '-' into BOTH spellings. The
+      // camelCase one is what the Meta, Snap and TikTok tags map (item_ids /
+      // content_id); the snake_case one is the site-style twin above.
+      'odp.listingIdShort',
       // The SERP-to-ODP handoff. A SERP card click stores its request id and
       // position in localStorage (th_serp_clicks); the ODP's inline utag_data
       // copies them here if that click is under 30 minutes old. Absent on an
@@ -80,6 +94,8 @@
       'ad_target.univeArea'
     ], labels: {
       'ad_target.univeArea':  'Postcode in Univé ad-target ranges (extension)',
+      'odp.postal_code':      'Listing postcode, no spaces (1234AB)',
+      'odp.listingIdShort':   'Short listing id (extension) → pixel item id',
       'odp.serp_request_id':  'serp.request_id of the SERP that led here',
       'odp.serp_position':    'Card position clicked on that SERP',
       'odp.serp_page_number': 'SERP page the card was on'
@@ -1624,6 +1640,9 @@
     'openai.currency', 'trovit.account_id', 'trovit.country', 'rtbhouse.*',
     'serp_result.location', 'ad_target.univeArea', 'subscription.orderId'
   ];
+  // 10.2: three more keys a live capture showed as Uncatalogued. Same rule as
+  // 10.0: visible before they had a name, so ticked everywhere.
+  var TICKED_10_2 = ['odp.postal_code', 'odp.listingIdShort', 'ad_slot'];
   // Ticked on first run.
   var DEFAULT_ON = [
     'tealium_event', 'page_category', 'page_currency',
@@ -1668,7 +1687,7 @@
     'qp.utm_source', 'qp.utm_medium', 'qp.utm_campaign', 'qp.utm_term',
     'qp.utm_content', 'qp.utm_id', 'qp.utm_source_platform',
     'qp.utm_creative_format', 'qp.utm_marketing_tactic'
-  ].concat(TICKED_10_0, [
+  ].concat(TICKED_10_0, TICKED_10_2, [
     // Everything below this point is derived, not listed — see wireDefaults().
     'event', 'reddit_pixel_event_id_*', 'fb_event_id_*',
     'tci.event_id'
@@ -2500,6 +2519,7 @@
     });
     return out;
   })()) });
+  MIGRATIONS.push({ v: '10.2', keys: TICKED_10_2 });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
   // Clear between test runs.
