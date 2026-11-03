@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      9.9
-// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
+// @version      10.0
+// @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
 // @match        *://*.huurwoningen.com/*
@@ -68,12 +68,35 @@
       // The property-detail block, from a live listing beacon. Unlabelled for the
       // same reason as the tenant profile: the names are the description.
       'odp.floor_space', 'odp.construction_type', 'odp.construction_year',
-      'odp.upkeep', 'odp.energy_rating'
-    ]},
+      'odp.upkeep', 'odp.energy_rating',
+      // The SERP-to-ODP handoff. A SERP card click stores its request id and
+      // position in localStorage (th_serp_clicks); the ODP's inline utag_data
+      // copies them here if that click is under 30 minutes old. Absent on an
+      // ODP reached any other way, which is the point.
+      'odp.serp_request_id', 'odp.serp_position', 'odp.serp_page_number'
+    ], labels: {
+      'odp.serp_request_id':  'serp.request_id of the SERP that led here',
+      'odp.serp_position':    'Card position clicked on that SERP',
+      'odp.serp_page_number': 'SERP page the card was on'
+    }},
     { name: 'Search (SERP)', keys: [
       'serp.result.search_query', 'serp.result.property_results',
-      'serp.result.sorting', 'serp.result.page_number', 'serp.result.view'
-    ]},
+      'serp.result.sorting', 'serp.result.page_number', 'serp.result.view',
+      // SerpContext.php puts the first two in the page's utag_data; the impression
+      // beacon (SerpImpression.js, component search_results / interaction
+      // impression) adds the other four, once per new request id. ranking_version
+      // is only set when a ranking model ordered the results.
+      'serp.request_id', 'serp.ranking_version',
+      'serp.result.listing_ids', 'serp.result.agent_ids', 'listing_count',
+      'serp.impression_trigger'
+    ], labels: {
+      'serp.request_id':         'Result-set id; joins impression, click and ODP',
+      'serp.ranking_version':    'Ranking model that ordered the results',
+      'serp.result.listing_ids': 'Listing ids shown, comma-separated, in order',
+      'serp.result.agent_ids':   'Agent id per shown listing, same order',
+      'listing_count':           'Number of listing cards in the impression',
+      'serp.impression_trigger': 'page_load or update (filter / page change)'
+    }},
     { name: 'User', keys: [
       'logged_in', 'customer_id_sha256', 'customer_id', 'user_id', 'customer_type',
       'property_alerts_count', 'favourites_count', 'pets',
@@ -115,6 +138,11 @@
       'consent_decision', 'tci.consent_type', 'tci.event_id',
       'tci.purposes_with_consent_all', 'tci.purposes_with_consent_processed',
       'tci.purposes_with_consent_unprocessed',
+      // The consent integration's queue markers. An event fired before the CMP
+      // and utag were both ready is held back and replayed later, stamped with
+      // one of these; the last three record why and in what state it was held.
+      'tci.from_queue', 'tci.from_early_queue',
+      'tci.early_queue_reason', 'tci.is_ready', 'tci.is_loading',
       'google_ad_storage_consent', 'google_ad_user_data_consent',
       'google_ad_personalization_consent', 'google_analytics_storage_consent',
       // Consent Mode transport settings rather than per-purpose decisions: they
@@ -141,17 +169,27 @@
       'tci.purposes_with_consent_all':        'Purposes consented · all',
       'tci.purposes_with_consent_processed':  'Purposes consented · processed',
       'tci.purposes_with_consent_unprocessed':'Purposes consented · unprocessed',
+      'tci.from_queue':                       'Replayed from the consent queue',
+      'tci.from_early_queue':                 'Replayed from the early queue (pre-CMP)',
+      'tci.early_queue_reason':               'Why it was held (e.g. tealium-and-cmp-loading)',
+      'tci.is_ready':                         'utag ready when the event was held',
+      'tci.is_loading':                       'utag still loading when held',
       'cp.OptanonConsent':                    'OneTrust consent cookie',
       'cp.OptanonAlertBoxClosed':             'OneTrust banner dismissed at',
       'cp.eupubconsent-v2':                   'IAB TCF v2 consent string',
       'cp.cc_cookie':                         'Cookie-consent state'
     }},
     { name: 'Experiments', keys: [
+      // Page.html.twig sets ab_group to an ARRAY of {ab_active, ab_specification},
+      // one per GrowthBook experiment viewed. Flattened it arrives as the two
+      // dotted keys; unflattened (or empty) it arrives as the bare 'ab_group'.
+      'ab_group',
       'ab_group.ab_active', 'ab_group.ab_specification',
       // experiment_tw9599_variant and friends: the test id is baked into the
       // attribute name, so it can only be matched by prefix.
       'experiment_*'
     ], labels: {
+      'ab_group':     'GrowthBook experiments viewed (array)',
       'experiment_*': 'Per-experiment variant (id is in the key)'
     }},
     // Labels below are Tealium's own definitions of its automatically-collected
@@ -167,8 +205,9 @@
       'ut.env', 'ut.profile', 'ut.version',
       'ut.account', 'ut.domain', 'ut.visitor_id', 'ut.session_id',
       'tealium.collect.datasourcekey', 'tealium.collect.profile',
-      'tealium.collect.endpoint', 'post_time'
+      'tealium.collect.endpoint', 'tealium.collect.dataEnrichment', 'post_time'
     ], labels: {
+      'tealium.collect.dataEnrichment': 'Collect tag enrichment mode (set by extension)',
       'tealium_visitor_id':           'Copy of the utag_main_v_id cookie',
       'tealium_session_id':           'Copy of utag_main_ses_id (start, epoch ms)',
       'tealium_session_number':       'Sessions for this visitor (utag_main__sn)',
@@ -372,6 +411,13 @@
       'cp.g_state', 'cp._ta', 'cp._tas', 'cp._tac', 'cp.__eoi',
       'clarity.project_id', 'meta.facebook.pixel_id',
       'fb_event_id_*',
+      // Same idea as fb_event_id_*, written by the LinkedIn Insight tag template:
+      // linkedin_event_id_<conversionId>_<tag UID>. A page view has no
+      // conversionId, hence the double underscore in linkedin_event_id__84.
+      'linkedin_event_id_*',
+      // Snapchat and TikTok pixel cookies, mapped as Cookie data sources.
+      'cp._scid', 'cp._scid_r',
+      'cp._ttp', 'cp._tt_enable_cookie', 'cp.ttcsid', 'cp.ttcsid_*',
       // Same Criteo/RTB House ids as the ls./ss. entries above, this time as
       // the cookie itself rather than its localStorage/sessionStorage copy.
       'cp.cto_bundle', 'cp.__rtbh.uid', 'cp.__rtbh.lid',
@@ -380,6 +426,15 @@
       'qp._gl'
     ], labels: {
       'fb_event_id_*': 'Meta event id for pixel/CAPI dedupe (per tag)',
+      'linkedin_event_id_*': 'LinkedIn event id for dedupe (conversion + tag)',
+      'cp._scid':            'Snap browser id (sent as u_c1)',
+      // Snap documents _scid_r only as a pixel cookie alongside _scid; what the
+      // _r copy adds is not documented, so the label says no more than that.
+      'cp._scid_r':          'Snap — companion of _scid, purpose undocumented',
+      'cp._ttp':             'TikTok browser id',
+      'cp._tt_enable_cookie':'TikTok — cookies-writable check',
+      'cp.ttcsid':           'TikTok session id',
+      'cp.ttcsid_*':         'TikTok session id, per pixel (id is in the key)',
       // See the ls.cto_bundle / ls.__rtbh.* labels above for what is and is not
       // documented about these two vendors.
       'cp.cto_bundle':  'Criteo cross-visit match id (~13-month life)',
@@ -420,6 +475,80 @@
       // read by Google's ad tags, so it belongs with the rest of them here.
       'cp.__eoi':    'Google ad cookie — EEA traffic, undocumented',
       'qp._gl':      'Google cross-domain linker — ids across domains'
+    }},
+    // Values the PROFILE writes into the payload, not the site: Tealium "Set Data
+    // Values" and JavaScript extensions that hold each vendor's account id and
+    // switches, so the tag templates read them from the data layer instead of
+    // hard-coding them. Read off the live prod utag.js of every web profile.
+    // Seeing one on a beacon means the extension ran for that hit; a pixel id
+    // that differs from the vendor row's own id is a mapping bug worth chasing.
+    //
+    // The <vendor>.* wildcards catch the per-event siblings (eventName, value,
+    // conversionLabel …) that the conversion extensions set only on the hits
+    // that need them.
+    { name: 'Tag config (Tealium extensions)', keys: [
+      'meta_pixel.pixelId', 'meta_pixel.autoConfig', 'meta_pixel.autoPageView',
+      'meta_pixel.disablePushState', 'meta_pixel.trackSingle',
+      'meta_pixel.eventName', 'meta_pixel.value', 'meta_pixel.contentType', 'meta_pixel.*',
+      'google_ads.conversionId', 'google_ads.conversionLabel', 'google_ads.value',
+      'google_ads.crossDomains', 'google_ads.*',
+      'ga4.measurementId',
+      'snap_pixel.pixelId', 'snap_pixel.eventName', 'snap_pixel.value', 'snap_pixel.*',
+      'tiktok_pixel.pixelId', 'tiktok_pixel.eventName', 'tiktok_pixel.value', 'tiktok_pixel.*',
+      'linkedin_insight.partnerId', 'linkedin_insight.conversionId', 'linkedin_insight.*',
+      'bing_uet.tagId', 'awin.advertiserId', 'promptwatch.projectId',
+      'openai.pixel_id', 'openai.event_name', 'openai.value', 'openai.currency',
+      'trovit.account_id', 'trovit.country',
+      'rtbhouse.taggingHash', 'rtbhouse.*',
+      // Derived by extensions rather than constant, but feeding tags the same way.
+      'serp_result.location', 'ad_target.univeArea', 'subscription.orderId'
+    ], labels: {
+      'meta_pixel.pixelId':          'Meta pixel id this profile fires',
+      'meta_pixel.autoConfig':       'Meta automatic configuration on/off',
+      'meta_pixel.autoPageView':     'Meta tag sends its own PageView',
+      'meta_pixel.disablePushState': 'Meta: no PageView on history.pushState',
+      'meta_pixel.trackSingle':      'Meta: send to this pixel only (trackSingle)',
+      'meta_pixel.eventName':        'Meta event this hit maps to (lowercase)',
+      'meta_pixel.value':            'Meta event value',
+      'meta_pixel.contentType':      'Meta content_type (home_listing on ODP events)',
+      'meta_pixel.*':                'Any other Meta tag setting',
+      'google_ads.conversionId':     'Google Ads account id (AW-…)',
+      'google_ads.conversionLabel':  'Google Ads conversion label for this hit',
+      'google_ads.value':            'Google Ads conversion value',
+      'google_ads.crossDomains':     'Conversion Linker cross-domain list',
+      'google_ads.*':                'Any other Google Ads tag setting',
+      'ga4.measurementId':           'GA4 measurement id (G-…)',
+      'snap_pixel.pixelId':          'Snapchat pixel id',
+      'snap_pixel.eventName':        'Snapchat event this hit maps to',
+      'snap_pixel.value':            'Snapchat event value',
+      'snap_pixel.*':                'Any other Snapchat tag setting',
+      'tiktok_pixel.pixelId':        'TikTok pixel id',
+      'tiktok_pixel.eventName':      'TikTok event this hit maps to',
+      'tiktok_pixel.value':          'TikTok event value',
+      'tiktok_pixel.*':              'Any other TikTok tag setting',
+      'linkedin_insight.partnerId':  'LinkedIn Insight partner id',
+      'linkedin_insight.conversionId': 'LinkedIn conversion id for this hit',
+      'linkedin_insight.*':          'Any other LinkedIn tag setting',
+      'bing_uet.tagId':              'Microsoft UET tag id',
+      'awin.advertiserId':           'Awin advertiser id',
+      'promptwatch.projectId':       'PromptWatch project id',
+      'openai.pixel_id':             'OpenAI pixel id',
+      'openai.event_name':           'OpenAI event this hit maps to',
+      'openai.value':                'OpenAI event value',
+      'openai.currency':             'OpenAI event currency',
+      'trovit.account_id':           'Thribee / Trovit account id',
+      'trovit.country':              'Thribee / Trovit country',
+      'rtbhouse.taggingHash':        'RTB House tagging hash',
+      'rtbhouse.*':                  'RTB House conversion class / value',
+      // Mapped as Search.search_string (Meta), search_string (Snap) and query
+      // (TikTok): the location slug cut from dom.pathname on a SERP.
+      'serp_result.location':        'SERP location slug → pixel search string',
+      // Huurwoningen/Pararius only: 'true' when odp.postal_code's four digits fall
+      // in a postcode range list hard-coded in the extension; absent otherwise.
+      'ad_target.univeArea':         'ODP postcode inside the Univé ad-target ranges',
+      // Platform.affiliate_data.subscription_id, overridden by ?subscription_id=
+      // or ?subscribed= on the landing URL.
+      'subscription.orderId':        'Subscription id, used as conversion order id'
     }},
     // Campaign tagging, as Tealium's built-in Query String data sources read it
     // off the landing URL: every ?utm_x= arrives as qp.utm_x. Only present on
@@ -1248,6 +1377,44 @@
         'payload.locale':    'Browser locale',
         'payload.timezone':  'Browser timezone'
       }},
+    // Google Ad Manager's ad request, as GPT sends it. Labels only where the
+    // meaning is documented or obvious from the value; the screen/viewport block
+    // (u_*, biw, bih, scr_*, adxs, adys) is fingerprint-grade noise and is
+    // catalogued but off by default, see WIRE_NOISE.
+    { name: 'Google Ad Manager (on the wire)', id: 'gam_wire', scope: { endpoint: ['gam'] },
+      keys: [
+        'iu_parts', 'enc_prev_ius', 'prev_iu_szs', 'fluid',
+        'gdpr', 'gdpr_consent', 'correlator', 'pvsid', 'eid', 'output',
+        'gdfp_req', 'vrg', 'ptt', 'impl', 'ifi', 'dids', 'adfs', 'sfv', 'sc',
+        'cookie_enabled', 'abxe', 'dt', 'lmt', 'btvi', 'ucis', 'oid',
+        'adxs', 'adys', 'biw', 'bih', 'scr_x', 'scr_y',
+        'u_his', 'u_h', 'u_w', 'u_ah', 'u_aw', 'u_cd', 'u_sd', 'u_tz'
+      ], labels: {
+        'iu_parts':       'Ad-unit path segments, deduplicated',
+        'enc_prev_ius':   'Ad-unit paths per slot, as indexes into iu_parts',
+        'prev_iu_szs':    'Slot sizes requested, per slot',
+        'fluid':          'Fluid (native) size per slot',
+        'gdpr':           'IAB TCF applies (1 = in scope)',
+        'gdpr_consent':   'IAB TCF consent string',
+        'correlator':     'Page-view correlator shared by all slots',
+        'pvsid':          'GPT page-view id',
+        'eid':            'Google experiment ids',
+        'vrg':            'GPT release',
+        'impl':           'Request mode (fifs = friendly iframe, single)',
+        'dt':             'Request time (epoch ms)',
+        'lmt':            'Document last-modified (epoch s)',
+        'u_tz':           'Timezone offset from UTC (minutes)'
+      }},
+    // Dignify's widget-config POST body, flattened like PromptWatch's.
+    { name: 'Dignify chat (on the wire)', id: 'dignify_wire', scope: { endpoint: ['dignify'] },
+      keys: [
+        'publicKey', 'context.pageUrl', 'context.pageTitle', 'context.referrer'
+      ], labels: {
+        'publicKey':         'Widget public key (site / account)',
+        'context.pageUrl':   'Page URL',
+        'context.pageTitle': 'Page title',
+        'context.referrer':  'Referrer URL'
+      }},
     // Addrevenue (Nordic affiliate/CPA network). Everything track.js and
     // mastertag.js call shares this one group — the conversion POST to /t, the
     // keep-alive to /ajax/heartbeat, and the four GET lookups that resolve the
@@ -1428,6 +1595,27 @@
                    'ls.__tealium_cap_pills', 'ls.__tealium_cap_labels',
                    'ls.__tealium_cap_groups',
                    'ss.__tealium_cap'];
+  // 10.0: the 28 keys a live huurwoningen SERP capture was still reporting as
+  // Uncatalogued, plus the siblings that arrive on other hits of the same
+  // features. Every one was visible before it had a name, so every one is
+  // ticked — on a fresh install via DEFAULT_ON, on an existing one via the 10.0
+  // migration. One list for both, so the two cannot drift.
+  var TICKED_10_0 = [
+    'serp.request_id', 'serp.ranking_version', 'serp.result.listing_ids',
+    'serp.result.agent_ids', 'listing_count', 'serp.impression_trigger',
+    'odp.serp_request_id', 'odp.serp_position', 'odp.serp_page_number',
+    'ab_group',
+    'tci.from_queue', 'tci.from_early_queue',
+    'tci.early_queue_reason', 'tci.is_ready', 'tci.is_loading',
+    'tealium.collect.dataEnrichment',
+    'linkedin_event_id_*',
+    'cp._scid', 'cp._scid_r', 'cp._ttp', 'cp._tt_enable_cookie', 'cp.ttcsid', 'cp.ttcsid_*',
+    'meta_pixel.*', 'google_ads.*', 'ga4.measurementId', 'snap_pixel.*',
+    'tiktok_pixel.*', 'linkedin_insight.*', 'bing_uet.tagId', 'awin.advertiserId',
+    'promptwatch.projectId', 'openai.pixel_id', 'openai.event_name', 'openai.value',
+    'openai.currency', 'trovit.account_id', 'trovit.country', 'rtbhouse.*',
+    'serp_result.location', 'ad_target.univeArea', 'subscription.orderId'
+  ];
   // Ticked on first run.
   var DEFAULT_ON = [
     'tealium_event', 'page_category', 'page_currency',
@@ -1471,11 +1659,12 @@
     // 9.9: the UTMs. Were visible as uncatalogued on campaign landings.
     'qp.utm_source', 'qp.utm_medium', 'qp.utm_campaign', 'qp.utm_term',
     'qp.utm_content', 'qp.utm_id', 'qp.utm_source_platform',
-    'qp.utm_creative_format', 'qp.utm_marketing_tactic',
+    'qp.utm_creative_format', 'qp.utm_marketing_tactic'
+  ].concat(TICKED_10_0, [
     // Everything below this point is derived, not listed — see wireDefaults().
     'event', 'reddit_pixel_event_id_*', 'fb_event_id_*',
     'tci.event_id'
-  ];
+  ]);
   // ───────────────────────────────────────────────────────────────────────────
   // The vendor wire groups are ticked BY SUBTRACTION: everything a group
   // catalogues is shown, except the families named here.
@@ -1498,7 +1687,10 @@
   var WIRE_NOISE = {
     '*':        ['tag_exp', 'uaa', 'uab', 'uafvl', 'uam', 'uamb', 'uap', 'uapv', 'uaw'],
     'fb_wire':  ['expv2[*'],
-    'gtm_wire': ['u', 'h', 'z']
+    'gtm_wire': ['u', 'h', 'z'],
+    'gam_wire': ['adxs', 'adys', 'biw', 'bih', 'scr_x', 'scr_y', 'u_his', 'u_h', 'u_w',
+                 'u_ah', 'u_aw', 'u_cd', 'u_sd', 'abxe', 'btvi', 'ucis', 'adfs', 'sfv',
+                 'ifi', 'dids', 'sc', 'cookie_enabled', 'ptt', 'gdfp_req', 'output', 'oid']
   };
   function wireDefaults() {
     var out = [];
@@ -1629,6 +1821,20 @@
     // the flattened body, so 'payload.href' is the literal captured key.
     { id: 'promptwatch', kind: 'vendor', vendor: 'PromptWatch', eventKey: ['action'],
       host: /(^|\.)promptwatch\.com$/i, test: /\/event(\?|$)/i },
+    // Google Ad Manager ad requests, from GPT (pubads_impl.js) on the
+    // Huurwoningen SERP and ODP. Found by the discovery survey. Not a Tealium tag
+    // and not a conversion: it is the page asking Google for the ads to show,
+    // carrying the ad-unit paths, slot sizes and the TCF string. The impression
+    // and viewability side lives in the ad_unit beacons, not here.
+    { id: 'gam', kind: 'vendor', vendor: 'Google Ad Manager (ad request)',
+      eventName: '(ad request)',
+      host: /(^|\.)doubleclick\.net$/i, test: /\/gampad\/ads(\?|$)/i },
+    // Dignify chat widget config: one POST per page load, sending the page URL,
+    // title and referrer to fetch the widget's settings. Found by the discovery
+    // survey, loaded by api.dignify.chat/loader.js rather than by a Tealium tag.
+    { id: 'dignify', kind: 'vendor', vendor: 'Dignify chat (widget config)',
+      eventName: '(widget config)',
+      host: /(^|\.)dignify\.chat$/i, test: /\/widget\/config(\?|$)/i },
     // Addrevenue affiliate pixel — the whole surface its two scripts call:
     // track.js posts the conversion to /t and a keep-alive to /ajax/heartbeat,
     // and before either can happen five further endpoints resolve the
@@ -1834,6 +2040,11 @@
     'tiktok':  { tag: 'TIKTOK',  colour: '#fe2c55' },
     // LinkedIn blue. Close to Meta's and Google's, the same trade as OpenAI.
     'linkedin': { tag: 'LINKEDIN', colour: '#0a66c2' },
+    // Google green, the one Google colour nothing else here uses. An ad request
+    // is not a measurement hit, so it should not borrow GADS blue.
+    'gam':     { tag: 'GAM',     colour: '#34a853' },
+    // Approximate, not a verified brand colour — picked to stay distinct.
+    'dignify': { tag: 'DIGNIFY', colour: '#00897b' },
     // Lifull Connect's magenta, approximate. Distinct from Awin's pink by being
     // lighter and from Meta's blue by being nowhere near it.
     'thribee': { tag: 'THRIBEE', colour: '#c2185b' },
@@ -1986,9 +2197,14 @@
   //                               One Tap prompt, not measurement.
   //   /pagead/ping                Ad-serving diagnostics from the publisher ad
   //                               stack. Opaque nested-array body, no ids.
+  //   adtrafficquality /getconfig/sodar
+  //                               GPT's invalid-traffic (anti-fraud) config
+  //                               fetch. Flagged only because 'tid' looks like an
+  //                               id; here it is the literal 'gpt'.
   var DISC_IGNORE = [
     { host: /(^|\.)google\.com$/i,             path: /^\/gsi\//i },
-    { host: /(^|\.)googlesyndication\.com$/i,  path: /^\/pagead\/ping(\/|$)/i }
+    { host: /(^|\.)googlesyndication\.com$/i,  path: /^\/pagead\/ping(\/|$)/i },
+    { host: /(^|\.)adtrafficquality\.google$/i, path: /^\/getconfig\/sodar(\/|$)/i }
   ];
   function discIgnored(host, path) {
     for (var i = 0; i < DISC_IGNORE.length; i++) {
@@ -2262,6 +2478,20 @@
     'qp.utm_content', 'qp.utm_id', 'qp.utm_source_platform',
     'qp.utm_creative_format', 'qp.utm_marketing_tactic'
   ] });
+  // 10.0 names the 28 uncatalogued keys above (TICKED_10_0) and claims two
+  // endpoints the discovery survey had as rows: Google Ad Manager's ad request
+  // and Dignify's widget config. Their wire keys are ticked minus WIRE_NOISE,
+  // so GAM's screen/viewport block stays one click away instead of flooding
+  // every SERP.
+  MIGRATIONS.push({ v: '10.0', keys: TICKED_10_0.concat((function () {
+    var out = [];
+    CATALOGUE.forEach(function (g) {
+      if (['gam_wire', 'dignify_wire'].indexOf(g.id) < 0) return;
+      var noise = (WIRE_NOISE['*'] || []).concat(WIRE_NOISE[g.id] || []);
+      g.keys.forEach(function (k) { if (noise.indexOf(k) < 0) out.push(qid(g, k)); });
+    });
+    return out;
+  })()) });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
   // Clear between test runs.
