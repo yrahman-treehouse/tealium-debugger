@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.9
+// @version      10.10
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -11,6 +11,9 @@
 // @match        *://*.immomiet.de/*
 // @match        *://*.mietsy.de/*
 // @match        *://*.toitpourtoi.fr/*
+// @match        *://*.leadflow.rent/*
+// @match        *://*.parariusoffice.nl/*
+// @match        *://*.parariusoffice.com/*
 // @run-at       document-start
 // @grant        none
 // @homepageURL  https://github.com/yrahman-treehouse/tealium-debugger
@@ -20,6 +23,8 @@
 // Updates: install from the raw URL above (not the github.com blob page, which
 // serves HTML). Bump @version on every push or the update check finds nothing.
 // Domains are inferred from the Tealium profile names (huurwoningen-nl -> huurwoningen.nl etc.).
+// Leadflow (profile leadflow) runs on *.leadflow.rent; Pararius Office on *.parariusoffice.nl/.com and
+// verhuren.huurwoningen.nl (already covered by *.huurwoningen.nl).
 // Add or correct @match lines as needed — staging/acceptance hosts are not covered.
 //
 // You should not need to edit this file to change which attributes are shown.
@@ -50,7 +55,7 @@
   // Shown on the TAGS pill while the panel is open. Must equal @version in the
   // header: the Chrome extension has no GM_info to read it from, so it lives
   // here too, and extension/build.py (run on every PR) fails if they differ.
-  var VERSION = '10.9';
+  var VERSION = '10.10';
   // ───────────────────────────────────────────────────────────────────────────
   // CATALOGUE — every attribute the picker offers.
   // Everything here is always CAPTURED; the picker controls what is DISPLAYED

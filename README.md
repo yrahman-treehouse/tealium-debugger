@@ -5,7 +5,8 @@ asks for, what Tealium actually **sent** to its servers, and the vendor pixels t
 (Meta, Google, TikTok, Snap and others). You can filter all of it and export it as JSON or CSV.
 
 It runs on rentaroof.co.uk, huurwoningen.nl, huurwoningen.com, pararius.nl, pararius.com,
-immomiet.de, mietsy.de and toitpourtoi.fr.
+immomiet.de, mietsy.de, toitpourtoi.fr, leadflow.rent (Leadflow) and parariusoffice.nl /
+parariusoffice.com (Pararius Office).
 
 ## Install it (once, about 3 minutes)
 
