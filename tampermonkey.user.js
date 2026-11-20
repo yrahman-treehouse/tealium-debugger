@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.11
+// @version      10.12
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -55,7 +55,7 @@
   // Shown on the TAGS pill while the panel is open. Must equal @version in the
   // header: the Chrome extension has no GM_info to read it from, so it lives
   // here too, and extension/build.py (run on every PR) fails if they differ.
-  var VERSION = '10.11';
+  var VERSION = '10.12';
   // ───────────────────────────────────────────────────────────────────────────
   // CATALOGUE — every attribute the picker offers.
   // Everything here is always CAPTURED; the picker controls what is DISPLAYED
@@ -80,6 +80,10 @@
       'odp.listing_id_short', 'odp.listing_id', 'odp.property', 'odp.title', 'odp.city',
       'odp.offer', 'odp.price_pcm', 'odp.price_pw', 'odp.rooms', 'odp.bedrooms',
       'odp.interior', 'odp.offered_since', 'odp.page_type',
+      // OdpContext.php: listing_type is the OdpListingType enum (for_rent /
+      // for_sale); price_sale is the asking price, only set on a for_sale
+      // listing, next to the rental price_pcm / price_pw above.
+      'odp.listing_type', 'odp.price_sale',
       // The property-detail block, from a live listing beacon. Unlabelled for the
       // same reason as the tenant profile: the names are the description.
       'odp.floor_space', 'odp.construction_type', 'odp.construction_year',
@@ -102,6 +106,8 @@
       // in a postcode range list hard-coded in that extension; absent otherwise.
       'ad_target.univeArea'
     ], labels: {
+      'odp.listing_type':     'for_rent or for_sale',
+      'odp.price_sale':       'Asking price (for_sale listings only)',
       'ad_target.univeArea':  'Postcode in Univé ad-target ranges (extension)',
       'odp.postal_code':      'Listing postcode, no spaces (1234AB)',
       'odp.listingIdShort':   'Short listing id (extension) → pixel item id',
@@ -308,7 +314,7 @@
       'va.*':                'Other AudienceStream visitor data',
       // A visitor keeps the timestamp of an audience after it is deleted from
       // the profile, so a key with no label below is an audience that is gone.
-      'va.dates.audience_*': 'Audience timestamp · audience no longer in treehouse-cdp',
+      'va.dates.audience_*': 'Audience · no longer in treehouse-cdp',
       'va.properties.account': 'Tealium account holding the visitor profile',
       'va.properties.profile': 'Tealium profile holding the visitor profile',
       'va.metrics.15': 'Total direct visits',
@@ -464,44 +470,44 @@
       'va.current_visit.flags.13': 'This visit · Referred visit',
       'va.current_visit.flags.14': 'This visit · Direct visit',
       'va.current_visit.flags.5147': 'This visit · is Bot Traffic',
-      'va.dates.audience_treehouse_treehouse-cdp_1113_count_ts': 'Audience timestamp · ADS - Univé service area',
-      'va.dates.audience_treehouse_treehouse-cdp_1127_count_ts': 'Audience timestamp · HW - Paid Addrevenue Send Audience',
-      'va.dates.audience_treehouse_treehouse-cdp_1122_count_ts': 'Audience timestamp · HW - Paid Gads Send Audience',
-      'va.dates.audience_treehouse_treehouse-cdp_1114_count_ts': 'Audience timestamp · HW - Paid Send Audience',
-      'va.dates.audience_treehouse_treehouse-cdp_1118_count_ts': 'Audience timestamp · HW - Reg D1 Cold',
-      'va.dates.audience_treehouse_treehouse-cdp_1120_count_ts': 'Audience timestamp · HW - Reg D12 Cold',
-      'va.dates.audience_treehouse_treehouse-cdp_1121_count_ts': 'Audience timestamp · HW - Reg D25 Cold',
-      'va.dates.audience_treehouse_treehouse-cdp_1119_count_ts': 'Audience timestamp · HW - Reg D5 Cold',
-      'va.dates.audience_treehouse_treehouse-cdp_1123_count_ts': 'Audience timestamp · HW - Reversed Send Audience',
-      'va.dates.audience_treehouse_treehouse-cdp_1103_count_ts': 'Audience timestamp · HW - Trial D1 Cold',
-      'va.dates.audience_treehouse_treehouse-cdp_1104_count_ts': 'Audience timestamp · HW - Trial D1 Warm',
-      'va.dates.audience_treehouse_treehouse-cdp_1111_count_ts': 'Audience timestamp · HW - Trial D11 Cold',
-      'va.dates.audience_treehouse_treehouse-cdp_1112_count_ts': 'Audience timestamp · HW - Trial D11 Warm',
-      'va.dates.audience_treehouse_treehouse-cdp_1105_count_ts': 'Audience timestamp · HW - Trial D2 Cold',
-      'va.dates.audience_treehouse_treehouse-cdp_1107_count_ts': 'Audience timestamp · HW - Trial D2 Holdout',
-      'va.dates.audience_treehouse_treehouse-cdp_1106_count_ts': 'Audience timestamp · HW - Trial D2 Warm',
-      'va.dates.audience_treehouse_treehouse-cdp_1108_count_ts': 'Audience timestamp · HW - Trial D7 Cold',
-      'va.dates.audience_treehouse_treehouse-cdp_1110_count_ts': 'Audience timestamp · HW - Trial D7 Hot',
-      'va.dates.audience_treehouse_treehouse-cdp_1109_count_ts': 'Audience timestamp · HW - Trial D7 Warm',
-      'va.dates.audience_treehouse_treehouse-cdp_1115_count_ts': 'Audience timestamp · PA - Paid Send Audience',
-      'va.dates.audience_treehouse_treehouse-cdp_1124_count_ts': 'Audience timestamp · PA - Reversed Send Audience',
-      'va.dates.audience_treehouse_treehouse-cdp_xG8i8EzJZBX7FTtREjeXu_count_ts': 'Audience timestamp · Paying subscribers - HW',
-      'va.dates.audience_treehouse_treehouse-cdp_L3tABJPofDA0t4muMdK19_count_ts': 'Audience timestamp · Paying subscribers - PA',
-      'va.dates.audience_treehouse_treehouse-cdp_S6bzCj3Ef0kA-hWgXODj7_count_ts': 'Audience timestamp · Paying subscribers - RAR',
-      'va.dates.audience_treehouse_treehouse-cdp_xjW3137Y7rlG2z0m3xVLO_count_ts': 'Audience timestamp · Paying subscribers - TPT',
-      'va.dates.audience_treehouse_treehouse-cdp_1116_count_ts': 'Audience timestamp · RAR - Paid Send Audience',
-      'va.dates.audience_treehouse_treehouse-cdp_1125_count_ts': 'Audience timestamp · RAR - Reversed Send Audience',
-      'va.dates.audience_treehouse_treehouse-cdp_1102_count_ts': 'Audience timestamp · Reaction Paywall Abandoned - HW',
-      'va.dates.audience_treehouse_treehouse-cdp_5AWBirb5YquUivyMrfh4y_count_ts': 'Audience timestamp · Registered Users Only - HW',
-      'va.dates.audience_treehouse_treehouse-cdp_AR4uvECFYGZx84uwQB-ei_count_ts': 'Audience timestamp · Registered Users Only - PA',
-      'va.dates.audience_treehouse_treehouse-cdp_LsHnSbSe4SrUVxmYjfWQU_count_ts': 'Audience timestamp · Registered Users Only - RAR',
-      'va.dates.audience_treehouse_treehouse-cdp_rsy3oDWYsnZl5g06C-Uq5_count_ts': 'Audience timestamp · Registered Users Only - TPT',
-      'va.dates.audience_treehouse_treehouse-cdp_1117_count_ts': 'Audience timestamp · TPT - Paid Send Audience',
-      'va.dates.audience_treehouse_treehouse-cdp_1126_count_ts': 'Audience timestamp · TPT - Reversed Send Audience',
-      'va.dates.audience_treehouse_treehouse-cdp_W2rDLDLQxFZPtRk_c5jkV_count_ts': 'Audience timestamp · Trial subscribers - HW',
-      'va.dates.audience_treehouse_treehouse-cdp_uteCc6JbW6Y_H7DwKIN5j_count_ts': 'Audience timestamp · Trial subscribers - PA',
-      'va.dates.audience_treehouse_treehouse-cdp_kxhLnY0QTnm-Z1hquZumr_count_ts': 'Audience timestamp · Trial subscribers - RAR',
-      'va.dates.audience_treehouse_treehouse-cdp_z-EMt_yqC7Ch2HTnlVSvp_count_ts': 'Audience timestamp · Trial subscribers - TPT'
+      'va.dates.audience_treehouse_treehouse-cdp_1113_count_ts': 'Audience · ADS - Univé service area',
+      'va.dates.audience_treehouse_treehouse-cdp_1127_count_ts': 'Audience · HW - Paid Addrevenue Send Audience',
+      'va.dates.audience_treehouse_treehouse-cdp_1122_count_ts': 'Audience · HW - Paid Gads Send Audience',
+      'va.dates.audience_treehouse_treehouse-cdp_1114_count_ts': 'Audience · HW - Paid Send Audience',
+      'va.dates.audience_treehouse_treehouse-cdp_1118_count_ts': 'Audience · HW - Reg D1 Cold',
+      'va.dates.audience_treehouse_treehouse-cdp_1120_count_ts': 'Audience · HW - Reg D12 Cold',
+      'va.dates.audience_treehouse_treehouse-cdp_1121_count_ts': 'Audience · HW - Reg D25 Cold',
+      'va.dates.audience_treehouse_treehouse-cdp_1119_count_ts': 'Audience · HW - Reg D5 Cold',
+      'va.dates.audience_treehouse_treehouse-cdp_1123_count_ts': 'Audience · HW - Reversed Send Audience',
+      'va.dates.audience_treehouse_treehouse-cdp_1103_count_ts': 'Audience · HW - Trial D1 Cold',
+      'va.dates.audience_treehouse_treehouse-cdp_1104_count_ts': 'Audience · HW - Trial D1 Warm',
+      'va.dates.audience_treehouse_treehouse-cdp_1111_count_ts': 'Audience · HW - Trial D11 Cold',
+      'va.dates.audience_treehouse_treehouse-cdp_1112_count_ts': 'Audience · HW - Trial D11 Warm',
+      'va.dates.audience_treehouse_treehouse-cdp_1105_count_ts': 'Audience · HW - Trial D2 Cold',
+      'va.dates.audience_treehouse_treehouse-cdp_1107_count_ts': 'Audience · HW - Trial D2 Holdout',
+      'va.dates.audience_treehouse_treehouse-cdp_1106_count_ts': 'Audience · HW - Trial D2 Warm',
+      'va.dates.audience_treehouse_treehouse-cdp_1108_count_ts': 'Audience · HW - Trial D7 Cold',
+      'va.dates.audience_treehouse_treehouse-cdp_1110_count_ts': 'Audience · HW - Trial D7 Hot',
+      'va.dates.audience_treehouse_treehouse-cdp_1109_count_ts': 'Audience · HW - Trial D7 Warm',
+      'va.dates.audience_treehouse_treehouse-cdp_1115_count_ts': 'Audience · PA - Paid Send Audience',
+      'va.dates.audience_treehouse_treehouse-cdp_1124_count_ts': 'Audience · PA - Reversed Send Audience',
+      'va.dates.audience_treehouse_treehouse-cdp_xG8i8EzJZBX7FTtREjeXu_count_ts': 'Audience · Paying subscribers - HW',
+      'va.dates.audience_treehouse_treehouse-cdp_L3tABJPofDA0t4muMdK19_count_ts': 'Audience · Paying subscribers - PA',
+      'va.dates.audience_treehouse_treehouse-cdp_S6bzCj3Ef0kA-hWgXODj7_count_ts': 'Audience · Paying subscribers - RAR',
+      'va.dates.audience_treehouse_treehouse-cdp_xjW3137Y7rlG2z0m3xVLO_count_ts': 'Audience · Paying subscribers - TPT',
+      'va.dates.audience_treehouse_treehouse-cdp_1116_count_ts': 'Audience · RAR - Paid Send Audience',
+      'va.dates.audience_treehouse_treehouse-cdp_1125_count_ts': 'Audience · RAR - Reversed Send Audience',
+      'va.dates.audience_treehouse_treehouse-cdp_1102_count_ts': 'Audience · Reaction Paywall Abandoned - HW',
+      'va.dates.audience_treehouse_treehouse-cdp_5AWBirb5YquUivyMrfh4y_count_ts': 'Audience · Registered Users Only - HW',
+      'va.dates.audience_treehouse_treehouse-cdp_AR4uvECFYGZx84uwQB-ei_count_ts': 'Audience · Registered Users Only - PA',
+      'va.dates.audience_treehouse_treehouse-cdp_LsHnSbSe4SrUVxmYjfWQU_count_ts': 'Audience · Registered Users Only - RAR',
+      'va.dates.audience_treehouse_treehouse-cdp_rsy3oDWYsnZl5g06C-Uq5_count_ts': 'Audience · Registered Users Only - TPT',
+      'va.dates.audience_treehouse_treehouse-cdp_1117_count_ts': 'Audience · TPT - Paid Send Audience',
+      'va.dates.audience_treehouse_treehouse-cdp_1126_count_ts': 'Audience · TPT - Reversed Send Audience',
+      'va.dates.audience_treehouse_treehouse-cdp_W2rDLDLQxFZPtRk_c5jkV_count_ts': 'Audience · Trial subscribers - HW',
+      'va.dates.audience_treehouse_treehouse-cdp_uteCc6JbW6Y_H7DwKIN5j_count_ts': 'Audience · Trial subscribers - PA',
+      'va.dates.audience_treehouse_treehouse-cdp_kxhLnY0QTnm-Z1hquZumr_count_ts': 'Audience · Trial subscribers - RAR',
+      'va.dates.audience_treehouse_treehouse-cdp_z-EMt_yqC7Ch2HTnlVSvp_count_ts': 'Audience · Trial subscribers - TPT'
     }},
     { name: 'Tealium cookies', keys: [
       'cp.utag_main_v_id', 'cp.utag_main_ses_id', 'cp.utag_main__sn', 'cp.utag_main__ss',
@@ -610,8 +616,23 @@
       // widget's persisted state; which widget is not identifiable from the key
       // alone, so the label says only what the key implies.
       'ls.cto_bundle', 'ls.__rtbh.uid', 'ls.__rtbh.lid', 'ls._grecaptcha',
-      'ls.webchat-local-data'
+      'ls.webchat-local-data',
+      // The site's own stores (front-end, src/Shared/Website/Helper). th_serp_clicks
+      // is the SERP-to-ODP handoff behind odp.serp_*: listing id -> request id,
+      // position, page and time of the click, at most 20, read for 30 minutes.
+      // seenListings is listing id -> when it was seen, at most 500.
+      'ls.th_serp_clicks', 'ls.seenListings',
+      // Tealium's own copy of the AudienceStream visitor profile — the same data
+      // the va.* group carries flattened — plus when it was last refreshed. The
+      // per-profile key is tealium_va_<account>_<profile>; the account is always
+      // treehouse here, which keeps the wildcard off tealium_va_update.
+      'ls.tealium_va', 'ls.tealium_va_update', 'ls.tealium_va_treehouse_*'
     ], labels: {
+      'ls.th_serp_clicks':       'SERP clicks → odp.serp_* (site, 30-min handoff)',
+      'ls.seenListings':         'Listings this browser has seen (site, max 500)',
+      'ls.tealium_va':           'Tealium cache of the visitor profile (= va.*)',
+      'ls.tealium_va_update':    'When that visitor-profile cache was refreshed',
+      'ls.tealium_va_treehouse_*': 'Visitor-profile cache, per Tealium profile',
       // 'sharedId' is Prebid's SharedID user-id module; the rlv_ prefix is the
       // wrapper that stores it. Named for what it IS rather than for whichever
       // vendor put it there, which is the part I cannot confirm from a capture.
@@ -643,8 +664,13 @@
     { name: 'sessionStorage', keys: [
       'ss.tealium_fired_events', 'ss.dfValue', 'ss.checkout-conversion:*',
       'ss.adroll_dqs', 'ss.adroll_flgs', 'ss.__rtbh.uid', 'ss.__rtbh.lid',
-      'ss.webchat-session-data'
+      'ss.webchat-session-data',
+      // maze-us and maze:widgets. Named for Maze, the user-research tool whose
+      // snippet shows in-page surveys; inferred from the key names, not from a
+      // vendor document, so the label claims no more than that.
+      'ss.maze*'
     ], labels: {
+      'ss.maze*':                 'Maze user-research widget — session state',
       // Both names turn up only in other sites' cookie-policy disclosures and
       // cookie-scanner directories (cookie.is, Cookiepedia) as "AdRoll,
       // uncategorised, no description available" — AdRoll's own published
@@ -1886,6 +1912,12 @@
   var TICKED_10_2 = ['odp.postal_code', 'odp.listingIdShort', 'ad_slot'];
   // 10.5: the TikTok and Snap per-tag event ids, visible as uncatalogued.
   var TICKED_10_5 = ['tiktok_event_id_*', 'snap_event_id_*'];
+  // 10.12: keys a live capture showed as Uncatalogued, ticked by the same rule.
+  // Three are catalogued but deliberately NOT here: ls.tealium_va and its
+  // per-profile copy (the whole visitor profile again, which the va.* group
+  // already shows key by key, also off) and ls.seenListings (up to 500 ids).
+  var TICKED_10_12 = ['odp.listing_type', 'odp.price_sale', 'ls.th_serp_clicks',
+                      'ls.tealium_va_update', 'ss.maze*'];
   // Ticked on first run.
   var DEFAULT_ON = [
     'tealium_event', 'page_category', 'page_currency',
@@ -1930,7 +1962,7 @@
     'qp.utm_source', 'qp.utm_medium', 'qp.utm_campaign', 'qp.utm_term',
     'qp.utm_content', 'qp.utm_id', 'qp.utm_source_platform',
     'qp.utm_creative_format', 'qp.utm_marketing_tactic'
-  ].concat(TICKED_10_0, TICKED_10_2, TICKED_10_5, [
+  ].concat(TICKED_10_0, TICKED_10_2, TICKED_10_5, TICKED_10_12, [
     // Everything below this point is derived, not listed — see wireDefaults().
     'event', 'reddit_pixel_event_id_*', 'fb_event_id_*',
     'tci.event_id'
@@ -2526,6 +2558,15 @@
   // well past RAW_MAX_FIELDS, with each value clipped to stay inside the quota.
   var NET_RAW_MAX_FIELDS = 150;
   var NET_RAW_MAX_LEN = 200;
+  // Browser-storage blobs that are catalogued for their presence and shape, not
+  // their bulk. A catalogued key is stored on every row whether or not it is
+  // ticked, and utag rows are otherwise never clipped, so the visitor-profile
+  // cache (several KB of JSON) and a 500-entry seenListings would each eat the
+  // MAX_BYTES store and push real captures out. These are stored clipped —
+  // exports included — which is the one exception to "exports carry the full
+  // value". Read the full value in the page's localStorage instead.
+  var STORE_BLOB_KEYS = ['ls.tealium_va', 'ls.tealium_va_treehouse_*', 'ls.seenListings'];
+  var STORE_BLOB_LEN = 500;
   var STORE_KEY   = '__tealium_cap';
   var UI_KEY      = '__tealium_cap_ui';
   var FIELDS_KEY  = '__tealium_cap_fields';
@@ -2764,6 +2805,7 @@
   })()) });
   MIGRATIONS.push({ v: '10.2', keys: TICKED_10_2 });
   MIGRATIONS.push({ v: '10.5', keys: TICKED_10_5 });
+  MIGRATIONS.push({ v: '10.12', keys: TICKED_10_12 });
   // ───────────────────────────────────────────────────────────────────────────
   // Storage — localStorage so captures survive tab closes and span tabs.
   // Clear between test runs.
@@ -3178,6 +3220,7 @@
   function splitPayload(row, d, rawMax, clip) {
     var isKnown   = makeMatcher(allKeysFor(row));
     var isBlocked = makeMatcher(BLOCKLIST);
+    var isBlob    = makeMatcher(STORE_BLOB_KEYS);
     var extra = {}, n = 0, empty = [];
     Object.keys(d).forEach(function (k) {
       if (isBlocked(k)) return;
@@ -3188,6 +3231,7 @@
       // its own, so the NAMES are kept and reported together.
       if (v === undefined || v === null || v === '') { empty.push(k); return; }
       if (clip) v = clipValue(v, clip);
+      if (isBlob(k)) v = clipValue(v, STORE_BLOB_LEN);
       if (isKnown(k)) { row.data[k] = v; }
       else { extra[k] = v; n++; }
     });
