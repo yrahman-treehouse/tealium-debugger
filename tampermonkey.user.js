@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.13
+// @version      10.14
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -55,7 +55,7 @@
   // Shown on the TAGS pill while the panel is open. Must equal @version in the
   // header: the Chrome extension has no GM_info to read it from, so it lives
   // here too, and extension/build.py (run on every PR) fails if they differ.
-  var VERSION = '10.13';
+  var VERSION = '10.14';
   // ───────────────────────────────────────────────────────────────────────────
   // CATALOGUE — every attribute the picker offers.
   // Everything here is always CAPTURED; the picker controls what is DISPLAYED
@@ -130,7 +130,12 @@
       // TikTok tags send it as their search string (Search.search_string,
       // search_string, query). Kept here, next to serp.result.search_query, so
       // the two can be compared on the same hit.
-      'serp_result.location'
+      'serp_result.location',
+      // Search type, applied filters and where the search is located, from the
+      // SERP's utag_data. Meaning of the values not documented here, so no labels.
+      'serp.result.type', 'serp.filters', 'serp.filter_count',
+      'serp.location_level', 'serp.location.country',
+      'serp.location.province', 'serp.location.city'
     ], labels: {
       'serp_result.location':    'Location slug (extension) → pixel search string',
       'serp.request_id':         'Result-set id; joins impression, click and ODP',
@@ -616,7 +621,8 @@
       // widget's persisted state; which widget is not identifiable from the key
       // alone, so the label says only what the key implies.
       'ls.cto_bundle', 'ls.__rtbh.uid', 'ls.__rtbh.lid', 'ls._grecaptcha',
-      'ls.webchat-local-data',
+      'ls.webchat-local-data', 'ls.u_sclid', 'ls.u_sclid_r', 'ls.tooltip-shown',
+      'ls.dignify-webchat-widget:trail:*',
       // The site's own stores (front-end, src/Shared/Website/Helper). th_serp_clicks
       // is the SERP-to-ODP handoff behind odp.serp_*: listing id -> request id,
       // position, page and time of the click, at most 20, read for 30 minutes.
@@ -659,7 +665,15 @@
       // of providing its risk analysis" — i.e. anti-fraud/anti-bot scoring, not
       // advertising.
       'ls._grecaptcha':          'Google reCAPTCHA anti-bot token, not ad-related',
-      'ls.webchat-local-data':   'Chat widget — persisted state, vendor unknown'
+      'ls.webchat-local-data':   'Chat widget — persisted state, vendor unknown',
+      // Snap's click-id pair, named after the u_sclid parameter; the _r copy is
+      // undocumented, same as cp._scid_r above, so its label says no more.
+      'ls.u_sclid':              'Snap click id (sclid)',
+      'ls.u_sclid_r':            'Snap — companion of u_sclid, purpose undocumented',
+      'ls.tooltip-shown':        'Flag that a tooltip was shown; source unknown',
+      // The key is dignify-webchat-widget:trail:<widget id>; the id is the part
+      // that varies, hence the wildcard.
+      'ls.dignify-webchat-widget:trail:*': 'Dignify chat widget — trail, per widget (id in key)'
     }},
     { name: 'sessionStorage', keys: [
       'ss.tealium_fired_events', 'ss.dfValue', 'ss.checkout-conversion:*',
