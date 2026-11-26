@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Tealium event capture — Treehouse
 // @namespace    treehouse.analytics
-// @version      10.12
+// @version      10.13
 // @description  Logs every utag view/link event, every client-to-server Tealium beacon (i.gif, /event) AND the vendor pixels the tags fire (Meta, GA4, Google Ads, UET/Bing, Clarity, Awin, Reddit, Addrevenue, Thribee, Meta CAPI Gateway, OpenAI, Snapchat, TikTok, LinkedIn, Google Ad Manager, Dignify chat) — plus a discovery survey of any third-party tracking endpoint NOT in the catalogue, attributed to the script that fired it. On-screen field picker and JSON/CSV export, persists across page loads and tabs.
 // @match        *://*.rentaroof.co.uk/*
 // @match        *://*.huurwoningen.nl/*
@@ -55,7 +55,7 @@
   // Shown on the TAGS pill while the panel is open. Must equal @version in the
   // header: the Chrome extension has no GM_info to read it from, so it lives
   // here too, and extension/build.py (run on every PR) fails if they differ.
-  var VERSION = '10.12';
+  var VERSION = '10.13';
   // ───────────────────────────────────────────────────────────────────────────
   // CATALOGUE — every attribute the picker offers.
   // Everything here is always CAPTURED; the picker controls what is DISPLAYED
@@ -64,7 +64,7 @@
   var CATALOGUE = [
     { name: 'Event', keys: [
       'tealium_event', 'page_category', 'page_currency', 'brand',
-      'page_country', 'page_language', 'ut.event', 'event'
+      'page_country', 'page_language', 'ut.event', 'event', 'step_name'
     ]},
     { name: 'Interaction', keys: [
       'component_name', 'element_type', 'element_text',
@@ -714,9 +714,9 @@
       // Same Criteo/RTB House ids as the ls./ss. entries above, this time as
       // the cookie itself rather than its localStorage/sessionStorage copy.
       'cp.cto_bundle', 'cp.__rtbh.uid', 'cp.__rtbh.lid',
-      // The only 'qp.' key catalogued so far — a QUERY PARAMETER data source,
-      // not a cookie. It is Google's, which is why it sits in this group.
-      'qp._gl'
+      // QUERY PARAMETER data sources (qp.*), not cookies. _gl is Google's, which
+      // is why it sits in this group; _target_path is not a vendor's.
+      'qp._gl', 'qp._target_path'
     ], labels: {
       'fb_event_id_*': 'Meta event id for pixel/CAPI dedupe (per tag)',
       'linkedin_event_id_*': 'LinkedIn event id for dedupe (conversion + tag)',
@@ -769,7 +769,8 @@
       // guessing: it appears on EEA traffic alongside consent-mode hits and is
       // read by Google's ad tags, so it belongs with the rest of them here.
       'cp.__eoi':    'Google ad cookie — EEA traffic, undocumented',
-      'qp._gl':      'Google cross-domain linker — ids across domains'
+      'qp._gl':      'Google cross-domain linker — ids across domains',
+      'qp._target_path': 'Query parameter _target_path on the landing URL'
     }},
     // Values the PROFILE writes into the payload, not the site: Tealium "Set Data
     // Values" and JavaScript extensions that hold each vendor's account id and
